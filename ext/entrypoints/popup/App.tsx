@@ -198,20 +198,6 @@ const CookieCloudPopup: React.FC = () => {
                 </div>
               </div>
 
-              {/* Cookie Expiration */}
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('cookieExpireMinutes', 'Cookie过期时间·分钟')}</label>
-                <input type="number" className="form-input" placeholder={msg('cookieExpireMinutesPlaceholder', '0为关闭浏览器后立刻过期')} value={data.expire_minutes}
-                  onChange={(e) => handleInputChange('expire_minutes', parseInt(e.target.value) || 0)} />
-              </div>
-
-              {/* Sync Interval */}
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('syncTimeInterval', '同步时间间隔·分钟')}</label>
-                <input type="number" className="form-input" min="1" placeholder={msg('syncTimeIntervalPlaceholder', '最少10分钟')} value={data.interval}
-                  onChange={(e) => handleInputChange('interval', parseInt(e.target.value) || 10)} />
-              </div>
-
               {/* Domain list (upload mode only) */}
               {data.type === 'up' && (
                 <div>

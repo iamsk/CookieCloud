@@ -54,18 +54,6 @@
     "generate": {
         "message": "Generate"
     },
-    "cookieExpireMinutes": {
-        "message": "Cookie Expiry Time · Minutes"
-    },
-    "cookieExpireMinutesPlaceholder": {
-        "message": "0 means it expires immediately after closing the browser"
-    },
-    "syncTimeInterval": {
-        "message": "Sync Interval · Minutes"
-    },
-    "syncTimeIntervalPlaceholder": {
-        "message": "At least 10 minutes"
-    },
     "syncDomains": {
         "message": "Sync Domains"
     },

@@ -54,18 +54,6 @@
     "generate": {
         "message": "自动生成"
     },
-    "cookieExpireMinutes": {
-        "message": "Cookie过期时间·分钟"
-    },
-    "cookieExpireMinutesPlaceholder": {
-        "message": "0为关闭浏览器后立刻过期"
-    },
-    "syncTimeInterval": {
-        "message": "同步时间间隔·分钟"
-    },
-    "syncTimeIntervalPlaceholder": {
-        "message": "最少10分钟"
-    },
     "syncDomains": {
         "message": "同步域名"
     },
