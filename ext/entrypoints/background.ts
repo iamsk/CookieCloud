@@ -60,44 +60,28 @@ export default defineBackground(() => {
           }
         }
 
-        if (config.keep_live) {
-          // Split by lines, each line format: url|interval
-          const keep_live = config.keep_live?.trim()?.split("\n");
-          for (let i = 0; i < keep_live.length; i++) {
-            const line = keep_live[i];
-            // 如果 line 以 #开头，则跳过
-            if (line.trim().startsWith("#")) continue;
-            const parts = line.split("|");
-            const url = parts[0];
-            const interval = parts[1] ? parseInt(parts[1]) : 60;
-            if (interval > 0 && minute_count % interval == 0) {
-              // Start visit
-              console.log(`keep live ${url} ${minute_count} ${interval}`);
-              
-              // Check if target page is already open, if so, don't open again
-              // Besides being unnecessary, it also avoids duplicate opening due to network delays
-              const [exists_tab] = await browser.tabs.query({"url": `${url.trim().replace(/\/+$/, '')}/*`});
-              if (exists_tab && exists_tab.id) {
-                console.log(`tab exists ${exists_tab.id}`, exists_tab);
-                if (!exists_tab.active) {
-                  // refresh tab
-                  console.log(`Background status, refresh page`);   
-                  await browser.tabs.reload(exists_tab.id);
-                } else {
-                  console.log(`Foreground status, skip`);   
-                }
-                return true;
-              } else {
-                console.log(`tab not exists, open in background`);
-              }
+        // Keep-alive: visit each selected domain once per hour in the background.
+        if (Array.isArray(config.keep_alive_domains) && config.keep_alive_domains.length > 0 && minute_count % 60 == 0) {
+          for (const domain of config.keep_alive_domains) {
+            const url = `https://${domain}/`;
+            console.log(`keep live ${url} ${minute_count}`);
 
-              // chrome tab create 
-              const tab = await browser.tabs.create({"url": url, "active": false, "pinned": true});
-              // Wait 5 seconds then close
-              await sleep(5000);
-              if (tab.id) {
-                await browser.tabs.remove(tab.id);
+            // If a tab for this URL already exists, just refresh it when backgrounded.
+            const [exists_tab] = await browser.tabs.query({ "url": `${url.replace(/\/+$/, '')}/*` });
+            if (exists_tab && exists_tab.id) {
+              if (!exists_tab.active) {
+                console.log(`Background status, refresh page`);
+                await browser.tabs.reload(exists_tab.id);
+              } else {
+                console.log(`Foreground status, skip`);
               }
+              continue;
+            }
+
+            const tab = await browser.tabs.create({ "url": url, "active": false, "pinned": true });
+            await sleep(5000);
+            if (tab.id) {
+              await browser.tabs.remove(tab.id);
             }
           }
         }
