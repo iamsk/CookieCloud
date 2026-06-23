@@ -17,7 +17,8 @@
     "compile": "tsc --noEmit",
     "github:build": "node scripts/release.mjs --mode=build",
     "github:release": "node scripts/release.mjs --mode=release",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@inquirer/prompts": "^8.4.2",
@@ -32,6 +33,7 @@
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.8.3",
+    "vitest": "^2.1.8",
     "wxt": "^0.20.6"
   },
   "dependencies": {
@@ -43,6 +45,7 @@
     "react-copy-to-clipboard": "^5.1.0",
     "react-dom": "^18.2.0",
     "short-uuid": "^5.2.0",
+    "tldts": "^6.1.0",
     "webextension-polyfill": "^0.12.0"
   },
   "packageManager": "pnpm@10.28.0+sha512.05df71d1421f21399e053fde567cea34d446fa02c76571441bfc1c7956e98e363088982d940465fd34480d4d90a0668bc12362f8aa88000a64e83d0b0e47be48"
