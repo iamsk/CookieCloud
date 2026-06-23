@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { load_data, save_data, derive_uuid } from '../../utils/functions';
 import { handleConfigMessage } from '../../utils/messaging';
-import { group_domains } from '../../utils/domain';
+import { group_domains, registrable_domain, looks_like_auth_cookie } from '../../utils/domain';
 import short_uid from 'short-uuid';
 import browser from 'webextension-polyfill';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
@@ -35,8 +35,10 @@ const CookieCloudPopup: React.FC = () => {
     keep_alive_domains: [],
   });
   const [allDomains, setAllDomains] = useState<string[]>([]);
+  const [authDomains, setAuthDomains] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState("");
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
+  const [showLoggedInOnly, setShowLoggedInOnly] = useState(false);
 
   // Load saved config; the uuid is always (re)derived from the password.
   useEffect(() => {
@@ -67,8 +69,14 @@ const CookieCloudPopup: React.FC = () => {
     if (data.type !== 'up') return;
     (async () => {
       try {
-        const cookies = await browser.cookies.getAll({});
+        // Same enumeration as the upload path so the list matches what gets synced.
+        const cookies = await browser.cookies.getAll({ partitionKey: {} });
+        const auth = new Set<string>();
+        for (const c of cookies) {
+          if (c.domain && looks_like_auth_cookie(c)) auth.add(registrable_domain(c.domain));
+        }
         setAllDomains(group_domains(cookies.map(c => c.domain || '').filter(Boolean)));
+        setAuthDomains(auth);
       } catch (error) {
         console.error('Failed to load domains:', error);
       }
@@ -100,6 +108,8 @@ const CookieCloudPopup: React.FC = () => {
   const visibleDomains = knownDomains.filter(d => {
     if (!d.includes(filter.trim())) return false;
     if (showSelectedOnly && !data.selected_domains.includes(d)) return false;
+    // "Likely logged-in" is a heuristic, so keep already-selected domains visible too.
+    if (showLoggedInOnly && !authDomains.has(d) && !data.selected_domains.includes(d)) return false;
     return true;
   });
 
@@ -212,11 +222,18 @@ const CookieCloudPopup: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-600 mb-2">{msg('syncDomains', '同步域名')}</label>
                   <input type="text" className="form-input mb-2" placeholder={msg('domainFilterPlaceholder', '过滤域名')} value={filter}
                     onChange={(e) => setFilter(e.target.value)} />
-                  <label className="flex items-center text-xs text-gray-500 mb-2 cursor-pointer">
-                    <input type="checkbox" className="mr-1" checked={showSelectedOnly}
-                      onChange={(e) => setShowSelectedOnly(e.target.checked)} />
-                    {msg('showSelectedOnly', '仅显示已同步')}
-                  </label>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 mb-2">
+                    <label className="flex items-center cursor-pointer">
+                      <input type="checkbox" className="mr-1" checked={showLoggedInOnly}
+                        onChange={(e) => setShowLoggedInOnly(e.target.checked)} />
+                      {msg('showLoggedInOnly', '仅显示疑似已登录')}
+                    </label>
+                    <label className="flex items-center cursor-pointer">
+                      <input type="checkbox" className="mr-1" checked={showSelectedOnly}
+                        onChange={(e) => setShowSelectedOnly(e.target.checked)} />
+                      {msg('showSelectedOnly', '仅显示已同步')}
+                    </label>
+                  </div>
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-1 px-1">
                     <div className="flex gap-2">
                       <span className="w-8 text-center">{msg('columnSync', '同步')}</span>

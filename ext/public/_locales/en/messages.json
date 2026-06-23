@@ -57,6 +57,9 @@
     "showSelectedOnly": {
         "message": "Show synced only"
     },
+    "showLoggedInOnly": {
+        "message": "Show likely logged-in"
+    },
     "columnSync": {
         "message": "Sync"
     },

@@ -57,6 +57,9 @@
     "showSelectedOnly": {
         "message": "仅显示已同步"
     },
+    "showLoggedInOnly": {
+        "message": "仅显示疑似已登录"
+    },
     "columnSync": {
         "message": "同步"
     },

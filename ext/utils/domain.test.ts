@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { registrable_domain, group_domains } from './domain';
+import { registrable_domain, group_domains, looks_like_auth_cookie } from './domain';
 
 describe('registrable_domain', () => {
   it('collapses subdomains to eTLD+1', () => {
@@ -27,5 +27,21 @@ describe('group_domains', () => {
     expect(
       group_domains(['.google.com', 'accounts.google.com', 'b.qq.com', 'a.qq.com'])
     ).toEqual(['google.com', 'qq.com']);
+  });
+});
+
+describe('looks_like_auth_cookie', () => {
+  it('flags httpOnly session/token cookies', () => {
+    expect(looks_like_auth_cookie({ name: 'PHPSESSID', httpOnly: true })).toBe(true);
+    expect(looks_like_auth_cookie({ name: 'access_token', httpOnly: true })).toBe(true);
+    expect(looks_like_auth_cookie({ name: 'passport', httpOnly: true })).toBe(true);
+  });
+  it('ignores non-httpOnly cookies even with auth-ish names', () => {
+    expect(looks_like_auth_cookie({ name: 'token', httpOnly: false })).toBe(false);
+    expect(looks_like_auth_cookie({ name: 'session', httpOnly: undefined })).toBe(false);
+  });
+  it('ignores httpOnly cookies with unrelated names', () => {
+    expect(looks_like_auth_cookie({ name: '_ga', httpOnly: true })).toBe(false);
+    expect(looks_like_auth_cookie({ name: '__cf_bm', httpOnly: true })).toBe(false);
   });
 });

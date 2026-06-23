@@ -20,3 +20,17 @@ export function group_domains(hosts: string[]): string[] {
   }
   return Array.from(set).sort();
 }
+
+// Cookie names that commonly carry a login session.
+const AUTH_NAME_PATTERN = /sess|sid|token|auth|login|logged|passport|jwt|remember|userid|user_id|uid|account|ticket|credential/i;
+
+/**
+ * Best-effort guess that a cookie represents a login session: it is `httpOnly`
+ * (server-set, not readable by page JS — true of most session tokens) AND its
+ * name matches a common auth pattern. This is a heuristic, not a guarantee —
+ * httpOnly anti-bot cookies can be false positives and unusual auth-cookie names
+ * can be false negatives.
+ */
+export function looks_like_auth_cookie(cookie: { name: string; httpOnly?: boolean }): boolean {
+  return !!cookie.httpOnly && AUTH_NAME_PATTERN.test(cookie.name);
+}
