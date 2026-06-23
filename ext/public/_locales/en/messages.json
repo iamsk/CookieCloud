@@ -78,6 +78,24 @@
     "keepAliveHint": {
         "message": "Keep Alive: visits the domain in the background once per hour to keep the session logged in"
     },
+    "overwriteDomains": {
+        "message": "Domains to overwrite"
+    },
+    "refresh": {
+        "message": "Refresh"
+    },
+    "loading": {
+        "message": "Loading…"
+    },
+    "noCloudData": {
+        "message": "No cloud data yet"
+    },
+    "previewFailed": {
+        "message": "Failed to load — check the password and server"
+    },
+    "localStorageCount": {
+        "message": "Local storage entries"
+    },
     "keepLiveStop": {
         "message": "Pause Sync and Keep Alive"
     },

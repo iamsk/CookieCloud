@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { load_data, save_data, derive_uuid } from '../../utils/functions';
+import { load_data, save_data, derive_uuid, download_preview } from '../../utils/functions';
 import { handleConfigMessage } from '../../utils/messaging';
 import { group_domains, registrable_domain, looks_like_auth_cookie } from '../../utils/domain';
 import short_uid from 'short-uuid';
@@ -39,6 +39,9 @@ const CookieCloudPopup: React.FC = () => {
   const [filter, setFilter] = useState("");
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
   const [showLoggedInOnly, setShowLoggedInOnly] = useState(false);
+  const [preview, setPreview] = useState<{ cookie_domains: string[]; local_storage_hosts: string[] } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   // Load saved config; the uuid is always (re)derived from the password.
   useEffect(() => {
@@ -81,6 +84,34 @@ const CookieCloudPopup: React.FC = () => {
         console.error('Failed to load domains:', error);
       }
     })();
+  }, [data.type]);
+
+  // Overwrite mode: preview the cloud domains that would be overwritten (read-only).
+  const loadPreview = async () => {
+    if (!data.password) return;
+    setPreviewError("");
+    setPreviewLoading(true);
+    try {
+      const res = await download_preview({ uuid: data.uuid, password: data.password });
+      if (res) {
+        setPreview(res);
+      } else {
+        setPreview(null);
+        setPreviewError(msg('previewFailed', '获取失败，请检查密码与服务器'));
+      }
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (data.type === 'down' && data.password) {
+      loadPreview();
+    } else {
+      setPreview(null);
+      setPreviewError("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.type]);
 
   const handleInputChange = (field: keyof ConfigData, value: string | number) => {
@@ -262,6 +293,37 @@ const CookieCloudPopup: React.FC = () => {
                     ))}
                   </div>
                   <div className="text-xs text-gray-400 mt-1">{msg('keepAliveHint', '保活：每小时后台访问一次该域名以保持登录')}</div>
+                </div>
+              )}
+
+              {/* Overwrite mode — read-only preview of the domains that will be overwritten */}
+              {data.type === 'down' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-2">
+                    {msg('overwriteDomains', '将覆盖的域名')}
+                    {preview && <span className="ml-2 text-xs font-normal text-gray-400">{preview.cookie_domains.length}</span>}
+                  </label>
+                  <button className="mb-2 text-xs text-blue-600 hover:underline disabled:text-gray-400"
+                    onClick={loadPreview} disabled={previewLoading || !data.password}>
+                    {previewLoading ? msg('loading', '加载中…') : msg('refresh', '刷新')}
+                  </button>
+                  <div className="border border-gray-200 rounded max-h-60 overflow-y-auto divide-y divide-gray-100">
+                    {previewError && <div className="p-3 text-sm text-red-500 text-center">{previewError}</div>}
+                    {!previewError && preview && preview.cookie_domains.length === 0 && (
+                      <div className="p-3 text-sm text-gray-400 text-center">{msg('noCloudData', '云端暂无数据')}</div>
+                    )}
+                    {!previewError && preview && preview.cookie_domains.map(domain => (
+                      <div key={domain} className="flex items-center px-2 py-1.5 text-sm">
+                        <span className="flex-1 truncate text-gray-700">{domain}</span>
+                        {preview.local_storage_hosts.some(h => h.includes(domain)) && (
+                          <span className="text-xs text-gray-400 ml-2">LS</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {preview && preview.local_storage_hosts.length > 0 && (
+                    <div className="text-xs text-gray-400 mt-1">{msg('localStorageCount', 'Local Storage 条目')}: {preview.local_storage_hosts.length}</div>
+                  )}
                 </div>
               )}
             </>

@@ -78,6 +78,24 @@
     "keepAliveHint": {
         "message": "保活：每小时后台访问一次该域名以保持登录"
     },
+    "overwriteDomains": {
+        "message": "将覆盖的域名"
+    },
+    "refresh": {
+        "message": "刷新"
+    },
+    "loading": {
+        "message": "加载中…"
+    },
+    "noCloudData": {
+        "message": "云端暂无数据"
+    },
+    "previewFailed": {
+        "message": "获取失败，请检查密码与服务器"
+    },
+    "localStorageCount": {
+        "message": "Local Storage 条目"
+    },
     "keepLiveStop": {
         "message": "暂停同步和保活"
     },

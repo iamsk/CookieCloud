@@ -246,6 +246,33 @@ export async function download_cookie(payload: DownloadPayload): Promise<any> {
   }
 }
 
+// Read-only: fetch + decrypt the cloud blob and report which domains it contains,
+// without writing anything to the browser. Used by the receiver to preview what
+// an overwrite would replace. Returns null on a network/decrypt failure (e.g.
+// wrong password) and empty arrays when the server has no data yet.
+export async function download_preview(payload: { uuid: string; password: string }): Promise<{ cookie_domains: string[]; local_storage_hosts: string[] } | null> {
+  const { uuid, password } = payload;
+  if (!uuid || !password) return null;
+  const endpoint = ENDPOINT + '/get/' + uuid;
+  try {
+    const response = await fetch(endpoint, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+    if (!response.ok) return { cookie_domains: [], local_storage_hosts: [] };
+    const result = await response.json();
+    if (result && result.encrypted) {
+      const useCryptoType = result.crypto_type || CRYPTO_TYPE;
+      const { cookie_data, local_storage_data } = cookie_decrypt(uuid, result.encrypted, password, useCryptoType);
+      return {
+        cookie_domains: cookie_data ? Object.keys(cookie_data).sort() : [],
+        local_storage_hosts: local_storage_data ? Object.keys(local_storage_data).sort() : [],
+      };
+    }
+    return { cookie_domains: [], local_storage_hosts: [] };
+  } catch (error) {
+    console.log("preview error", error);
+    return null;
+  }
+}
+
 function cookie_decrypt(uuid: string, encrypted: string, password: string, crypto_type: string = 'legacy'): any {
   const hash = CryptoJS.MD5(uuid + '-' + password).toString();
   const the_key = hash.substring(0, 16);
