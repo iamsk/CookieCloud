@@ -2,95 +2,113 @@
 
 [中文](./README_cn.md) | [English](./README.md)
 
-![](extension/assets/icon.png)
+![](ext/public/icon/icon.png)
 
-CookieCloud is a small tool for syncing cookies with your self-hosted server, allowing you to synchronize browser cookies and local storage to your phone and cloud. It features built-in end-to-end encryption and allows you to set a synchronization interval.
+CookieCloud is a small tool for syncing cookies with your self-hosted server. It synchronizes browser cookies and local storage to your phone and the cloud, features built-in end-to-end encryption, and lets you set a synchronization interval.
 
-> Since version 0.3.0, the project has been rewritten using **wxt**. It now supports encryption algorithms with a fixed IV and supports more standard libraries for decryption. See the **wxt** branch for details.
-
-
-> The latest version now supports synchronization of local storage under the same domain name.
+The current version is rewritten with **[wxt](https://wxt.dev)** (Manifest V3, React + TypeScript). It supports syncing local storage under the same domain, and offers two encryption algorithms: the original CryptoJS algorithm (dynamic IV) and a standard **AES-128-CBC** algorithm (fixed IV) that is easy to decrypt with mainstream crypto libraries in any language.
 
 [Telegram channel](https://t.me/CookieCloudTG) | [Telegram group](https://t.me/CookieCloudGroup)
 
-## ⚠️ Breaking Change
+## Repository Structure
 
-Due to the high demand for local storage support, plugin version 0.1.5+ now also supports local storage in addition to cookies. This has resulted in a change to the encrypted text format (from a separate cookie object to `{ cookie_data, local_storage_data }`).
+This is a monorepo. Each top-level directory is an independent module:
 
-Furthermore, to avoid conflicts in configuration synchronization, the configuration storage has been moved from remote to local. Users of previous versions will need to reconfigure their setup.
+| Directory | Stack | Responsibility |
+| --------- | ----- | -------------- |
+| [`ext/`](#ext--browser-extension) | wxt + React + TypeScript + Tailwind | The browser extension — collects cookies / local storage, encrypts them, and syncs with the server. The heart of the project. |
+| [`api/`](#api--server-side) | Node.js + Express | The current server side. Stores the encrypted blob keyed by UUID and serves it back. |
+| [`docker/`](#docker--published-image) | Node.js + Express | A minimal server used to build the published `easychen/cookiecloud` Docker image. |
+| [`web/`](#web--landing-page) | Vite + React + Tailwind | The bilingual marketing / landing page. Not involved in syncing. |
+| [`examples/`](#examples--decryption--usage-references) | Multi-language | Reference implementations for decrypting CookieCloud data and using it in headless browsers. |
+| `design/` | Adobe XD | Source file for the logo (`logo.xd`). |
+| `.github/` | GitHub Actions | CI that builds the Chrome/Firefox extension on tag push and publishes to the stores. |
+| `RoboFile.php` | Robo | Task runner shortcuts for local dev, the Docker image, and extension builds. |
 
-We apologize for any inconvenience this may cause 🙇🏻‍♂️
+### `ext/` — Browser Extension
 
+The extension is the only component that touches your cookies. It is built with [wxt](https://wxt.dev) and ships as Manifest V3.
 
-## Official Tutorials
+- **`entrypoints/popup/App.tsx`** — the React configuration UI. Lets you pick the working mode (upload / overwrite / pause), server endpoint, UUID, end-to-end password, encryption algorithm, cookie expiry, sync interval, whether to include local storage, extra request headers, domain keyword filters, a domain blacklist, and "keep alive" URLs. The config is persisted locally under the key `COOKIE_SYNC_SETTING`.
+- **`entrypoints/background.ts`** — the background service worker. It registers a 1-minute alarm; on each tick it reads the saved config and, when the elapsed minutes are divisible by the configured interval, runs an upload or a download (or does nothing in pause mode). It also implements **Cookie Keep Alive**: periodically opening the listed URLs in a background tab to keep sessions alive.
+- **`entrypoints/content.ts`** — a content script injected into every page. In upload mode it reads the page's `localStorage` and stashes it in extension storage under `LS-<host>`. In overwrite ("down") mode it writes the previously-synced values from `LS-<host>` back into the page's `localStorage`. This is how local storage sync is achieved, since the background worker cannot read a page's `localStorage` directly.
+- **`utils/functions.ts`** — the core logic and **the only place encryption happens**. It collects cookies by domain / blacklist, gathers local storage, performs `cookie_encrypt` / `cookie_decrypt`, uploads (gzip-compressed, with a 24-hour SHA-256 de-duplication guard so unchanged data is not re-uploaded), and downloads (writing cookies via `browser.cookies.set` and storing local storage for the content script to apply). See [Encryption](#cookie-encryption-and-decryption-algorithm).
+- **`utils/messaging.ts`** — a thin dispatcher that routes a config payload to `upload_cookie` or `download_cookie`.
+- **`public/_locales/`** — i18n messages for `en` and `zh_CN`.
+- **`wxt.config.ts`** — wxt/manifest config. Requested permissions: `cookies`, `tabs`, `storage`, `alarms`, `unlimitedStorage`, and `<all_urls>` host access.
+- **`scripts/release.mjs`** — an interactive release helper that bumps the version, commits, tags (`build-v*` / `release-v*`), and pushes to trigger CI.
 
-![](images/20230121141854.png)  
+### `api/` — Server Side
 
-1. Video: [Bilibili](https://www.bilibili.com/video/BV1fR4y1a7zb) | [YouTube](https://youtu.be/3oeSiGHXeQw) - Please follow and subscribe 🥺
-2. Tutorial: [Juejin](https://juejin.cn/post/7190963442017108027)
+A self-hostable Express server (`api/app.js`). The server never sees your password and stores only the encrypted blob.
 
-## FAQ
+- `POST /update` — saves `{ encrypted, crypto_type }` to `data/<uuid>.json`.
+- `GET|POST /get/:uuid` — returns the stored blob. If a `password` is supplied in the body it decrypts server-side and returns the parsed object; otherwise it returns the raw encrypted string. A `?crypto_type=` query parameter can override the algorithm.
+- `GET /health` — health check.
+- Hardened with CORS, gzip compression, rate limiting (100 requests / 15 minutes per IP), Winston file logging (`api/utils/logger.js`), and graceful shutdown.
 
-1. Currently, synchronization is only one-way, meaning one browser can upload while another downloads.
-2. The browser extension officially supports Chrome and Edge. Other Chromium-based browsers might work but have not been tested. Use the source code `cd extension && pnpm build --target=firefox-mv2` to compile a version for Firefox yourself. Be aware that Firefox's cookie format is different from Chrome's and they cannot be mixed.
+### `docker/` — Published Image
 
-![](images/20230121092535.png)  
+A trimmed-down server (`docker/app.js`) plus `docker/Dockerfile` (based on `node:16-alpine`). This is the source for the published [`easychen/cookiecloud`](https://hub.docker.com/r/easychen/cookiecloud) image. It exposes the same `/update` and `/get/:uuid` endpoints.
+
+### `web/` — Landing Page
+
+A static Vite + React + Tailwind landing page (bilingual EN/ZH) that markets the project and links to the stores. It is purely informational and is not part of the sync pipeline.
+
+### `examples/` — Decryption & Usage References
+
+- **`examples/decrypt.py`** — a Python script that fetches and decrypts data, supporting both encryption algorithms.
+- **`examples/fixediv/`** — production-ready decryption of the `aes-128-cbc-fixed` algorithm in **Node.js, Python, Java (Maven & dependency-free), Go, and PHP**, with shared test data and a `test_all.sh` cross-language verification script.
+- **`examples/playwright/`** — a headless-browser example that pulls cloud cookies and injects them into a Playwright context.
 
 ## Browser Plugin
 
-1. Installation from store: [Edge Store](https://microsoftedge.microsoft.com/addons/detail/cookiecloud/bffenpfpjikaeocaihdonmgnjjdpjkeo) | [Chrome Store](https://chrome.google.com/webstore/detail/cookiecloud/ffjiejobkoibkjlhjnlgmcnnigeelbdl) (Note: Versions in the store might be delayed due to review processes)
-2. Manual download and installation: See Release
+1. Install from a store: [Edge Store](https://microsoftedge.microsoft.com/addons/detail/cookiecloud/bffenpfpjikaeocaihdonmgnjjdpjkeo) | [Chrome Store](https://chrome.google.com/webstore/detail/cookiecloud/ffjiejobkoibkjlhjnlgmcnnigeelbdl) (store versions may lag due to review).
+2. Manual download and install: see Release.
 
+### Build from source
 
-## Server Side
+```bash
+cd ext
+pnpm install
+pnpm build:chrome      # or: pnpm build:firefox
+pnpm zip:chrome        # package a distributable zip
+```
 
-### Official Test Server
+> Firefox's cookie format differs from Chrome's and the two cannot be mixed.
 
-> For testing purposes only. Stability is not guaranteed. It is recommended to set up your own server to further enhance data security.
+## Official Tutorials
 
-* [https://ccc.ft07.com](https://ccc.ft07.com)
+![](images/20230121141854.png)
 
+1. Video: [Bilibili](https://www.bilibili.com/video/BV1fR4y1a7zb) | [YouTube](https://youtu.be/3oeSiGHXeQw)
+2. Tutorial: [Juejin](https://juejin.cn/post/7190963442017108027)
 
-### Third Party
+## Server Side · Self-hosting
 
-> Free server-side services provided by third parties are available for trial. Stability is determined by the third parties. We appreciate their sharing 👏
+> Hosting your own server keeps your data fully under your control.
 
-> Some server-side versions might be outdated. If tests fail, try adding domain keywords before retrying.
-
-- <http://45.138.70.177:8088> provided by [LSRNB](https://github.com/lsrnb)
-- <http://45.145.231.148:8088> provided by [shellingford37](https://github.com/shellingford37)
-- <http://nastool.cn:8088> provided by [nastools](https://github.com/jxxghp/nas-tools)
-- <https://cookies.xm.mk> provided by [Xm798](https://github.com/Xm798)
-- <https://cookie.xy213.cn> provided by [xuyan0213](https://github.com/xuyan0213)
-- <https://cookie-cloud.vantis-space.com> provided by [vantis](https://github.com/vantis-zh)
-- <https://cookiecloud.25wz.cn> provided by [wuquejs](https://github.com/wuquejs)
-- <https://cookiecloud.zhensnow.uk> provided by [YeTianXingShi](https://github.com/YeTianXingShi)
-- <https://cookiecloud.ddsrem.com> provided by [DDSRem](https://github.com/DDS-Derek)
-- <https://cookiecloud.d0zingcat.xyz> provided by [d0zingcat](https://github.com/d0zingcat)
-
-### Self-hosting
-
-#### Option One: Deploy through Docker, simple, recommended method
+### Option One: Docker (simple, recommended)
 
 Supports architectures: linux/amd64, linux/arm64, etc.
 
-
-##### Start with Docker Command
+#### Start with the Docker command
 
 ```bash
 docker run -p=8088:8088 easychen/cookiecloud:latest
 ```
-Default port 8088, image address [easychen/cookiecloud](https://hub.docker.com/r/easychen/cookiecloud)
 
-###### Specify API Directory - Optional Step, Can Be Skipped
+Default port 8088, image [easychen/cookiecloud](https://hub.docker.com/r/easychen/cookiecloud).
 
-Add the environment variable -e API_ROOT=/`subdirectory must start with a slash` to specify a subdirectory:
+##### Specify an API subdirectory (optional)
+
+Add the environment variable `-e API_ROOT=/subdirectory` (must start with a slash):
 
 ```bash
 docker run -e API_ROOT=/cookie -p=8088:8088 easychen/cookiecloud:latest
 ```
 
-##### Start with Docker-compose
+#### Start with Docker Compose
 
 ```yml
 version: '3'
@@ -107,386 +125,156 @@ services:
 
 [docker-compose.yml provided by aitixiong](https://github.com/easychen/CookieCloud/issues/42)
 
-#### Option Two: Deploy with Node
+### Option Two: Node
 
-> Suitable for environments without docker but supporting node, requires installing node in advance
+> For environments without Docker but with Node installed.
 
 ```bash
 cd api && yarn install && node app.js
 ```
-Default port 8088, also supports the API_ROOT environment variable
 
-## Debugging and Log Viewing
+Default port 8088; also honours the `API_ROOT` environment variable.
 
-Enter the browser plugin list, click on service worker, a panel will pop up where you can view the operation log
+## Debugging and Logs
 
-![](images/20230121095327.png)  
+Open the browser's extension list, click the service worker for CookieCloud, and a panel pops up where you can view the runtime log.
+
+![](images/20230121095327.png)
 
 ## API Interface
 
 Upload:
 
-- method: POST
-- url: /update
-- parameters
-  - uuid
-  - encrypted: the string encrypted locally
+- method: `POST`
+- url: `/update`
+- parameters:
+  - `uuid`
+  - `encrypted`: the string encrypted locally
+  - `crypto_type`: optional, the algorithm used (`legacy` or `aes-128-cbc-fixed`)
 
 Download:
 
-- method: POST/GET
-- url: /get/:uuid
+- method: `POST` / `GET`
+- url: `/get/:uuid`
 - parameters:
-   - password: optional, if not provided returns the encrypted string, if provided attempts to decrypt and send the content;
-
+  - `password`: optional. If omitted, the raw encrypted string is returned; if provided, the server decrypts and returns the content.
+  - `crypto_type`: optional query parameter to force a specific algorithm.
 
 ## Cookie Encryption and Decryption Algorithm
 
-### Encryption
+CookieCloud is end-to-end encrypted: the **UUID** and the **password** never leave your browser together, and the server only stores the ciphertext. Encryption and decryption both live in [`ext/utils/functions.ts`](ext/utils/functions.ts).
 
-const data = JSON.stringify(cookies);
+### Key derivation (shared by both algorithms)
 
-1. md5(uuid+password) take the first 16 characters as the key
-2. AES.encrypt(data, the_key)
+```
+the_key = MD5(uuid + '-' + password).hex().substring(0, 16)   // a 16-character string
+```
 
-### Decryption
+### Plaintext format
 
-1. md5(uuid+password) take the first 16 characters as the key
-2. AES.decrypt(encrypted, the_key)
+Before encryption, the payload is JSON:
 
-After decryption, get data, JSON.parse(data) to obtain the data object { cookie_data, local_storage_data };
-
-Reference function
-
-```node
-function cookie_decrypt( uuid, encrypted, password )
+```json
 {
-    const CryptoJS = require('crypto-js');
-    const the_key = CryptoJS.MD5(uuid+'-'+password).toString().substring(0,16);
-    const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
-    const parsed = JSON.parse(decrypted);
-    return parsed;
+  "cookie_data": { "<domain>": [ /* cookie objects */ ] },
+  "local_storage_data": { "LS-<host>": { "<key>": "<value>" } },
+  "update_time": "<ISO timestamp>"
 }
 ```
 
-See `extension/function.js` for more
+After decryption you `JSON.parse` it back into `{ cookie_data, local_storage_data }`.
 
-## Headless Browser Example Using CookieCloud
+### Algorithm 1 — `legacy` (default, "CryptoJS / dynamic IV")
 
-Refer to `examples/playwright/tests/example.spec.js` 
+`the_key` is passed to CryptoJS as a **passphrase**. CryptoJS generates a random 8-byte salt and derives the real key + IV with OpenSSL's `EVP_BytesToKey` (MD5), producing **AES-256-CBC** with PKCS7 padding. The output is the OpenSSL `"Salted__" + salt + ciphertext` envelope, Base64-encoded — so the IV is different (random) for every message.
+
+```js
+function cookie_decrypt(uuid, encrypted, password) {
+  const CryptoJS = require('crypto-js');
+  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
+  const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
+  return JSON.parse(decrypted);
+}
+```
+
+### Algorithm 2 — `aes-128-cbc-fixed` (standard, "fixed IV")
+
+`the_key` is used **directly as the 16 raw bytes** of an **AES-128** key, with a **fixed all-zero IV** and PKCS7 padding. The output is the Base64 of the raw ciphertext (no `Salted__` envelope). Because there is no custom KDF or salt header, this format is trivial to decrypt with the standard crypto library of any language.
+
+- Algorithm: AES-128-CBC
+- Key: `MD5(uuid + '-' + password).substring(0, 16)` (as UTF-8 bytes)
+- IV: 16 bytes of zero
+- Padding: PKCS7
+- Encoding: Base64
+
+```js
+function cookie_decrypt_fixed(uuid, encrypted, password) {
+  const CryptoJS = require('crypto-js');
+  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
+  const options = {
+    iv: CryptoJS.enc.Hex.parse('00000000000000000000000000000000'),
+    mode: CryptoJS.mode.CBC,
+    padding: CryptoJS.pad.Pkcs7,
+  };
+  const decrypted = CryptoJS.AES
+    .decrypt(encrypted, CryptoJS.enc.Utf8.parse(the_key), options)
+    .toString(CryptoJS.enc.Utf8);
+  return JSON.parse(decrypted);
+}
+```
+
+### Decryption in other languages
+
+- **`aes-128-cbc-fixed`** — ready-to-run implementations for Node.js, Python, Java, Go, and PHP live in [`examples/fixediv/`](examples/fixediv/), along with a `test_all.sh` that verifies they all produce identical output.
+- **`legacy`** — Python and other-language references: see [`examples/decrypt.py`](examples/decrypt.py), [PyCookieCloud](https://github.com/lupohan44/PyCookieCloud), the [Python crypto write-up](https://blog.homurax.com/2022/08/12/python-crypto/), the [Go reference](https://github.com/easychen/CookieCloud/issues/49), and the [Deno reference](https://github.com/easychen/CookieCloud/issues/41).
+
+## Using CookieCloud in a Headless Browser
+
+See [`examples/playwright/tests/example.spec.js`](examples/playwright/tests/example.spec.js).
 
 ```javascript
 test('Access nexusphp using CookieCloud', async ({ page, browser }) => {
-  // Read and decrypt cloud cookie
+  // Read and decrypt the cloud cookies
   const cookies = await cloud_cookie(COOKIE_CLOUD_HOST, COOKIE_CLOUD_UUID, COOKIE_CLOUD_PASSWORD);
-  // Add cookie to browser context
+  // Inject them into a fresh browser context
   const context = await browser.newContext();
   await context.addCookies(cookies);
   page = await context.newPage();
-  // From this point on, the Cookie is already attached, proceed as normal
+  // From here on the requests carry the cookies — browse as usual
   await page.goto('https://demo.nexusphp.org/index.php');
-  await expect(page.getByRole('link', { name: 'magik' })).toHaveText("magik");
+  await expect(page.getByRole('link', { name: 'magik' })).toHaveText('magik');
   await context.close();
 });
-
 ```
 
-### Functions
-
 ```javascript
-async function cloud_cookie( host, uuid, password )
-{
+async function cloud_cookie(host, uuid, password, crypto_type = 'legacy') {
   const fetch = require('cross-fetch');
-  const url = host+'/get/'+uuid;
-  const ret = await fetch(url);
-  const json = await ret.json();
+  let url = host + '/get/' + uuid;
+  if (crypto_type && crypto_type !== 'legacy') url += `?crypto_type=${crypto_type}`;
+  const json = await (await fetch(url)).json();
   let cookies = [];
-  if( json && json.encrypted )
-  {
-    const {cookie_data, local_storage_data} = cookie_decrypt(uuid, json.encrypted, password);
-    for( const key in cookie_data )
-    {
-      // merge cookie_data[key] to cookies
-      cookies = cookies.concat(cookie_data[key].map( item => {
-        if( item.sameSite == 'unspecified' ) item.sameSite = 'Lax';
+  if (json && json.encrypted) {
+    const useCryptoType = crypto_type || json.crypto_type || 'legacy';
+    const { cookie_data } = cookie_decrypt(uuid, json.encrypted, password, useCryptoType);
+    for (const key in cookie_data) {
+      cookies = cookies.concat(cookie_data[key].map(item => {
+        if (item.sameSite == 'unspecified') item.sameSite = 'Lax';
         return item;
-      } ));
+      }));
     }
   }
   return cookies;
 }
-
-function cookie_decrypt( uuid, encrypted, password )
-{
-    const CryptoJS = require('crypto-js');
-    const the_key = CryptoJS.MD5(uuid+'-'+password).toString().substring(0,16);
-    const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
-    const parsed = JSON.parse(decrypted);
-    return parsed;
-}
 ```
 
-## Python Decryption
+## FAQ
 
-Refer to the article ["Implementation and Problem Handling of Crypto in Python for AES Encryption and Decryption in JS CryptoJS"](https://blog.homurax.com/2022/08/12/python-crypto/) or use [PyCookieCloud](https://github.com/lupohan44/PyCookieCloud)
+1. Synchronization is one-way: one browser uploads while another downloads.
+2. The extension officially supports Chrome and Edge. Other Chromium-based browsers should work but are untested. Build a Firefox version yourself with `cd ext && pnpm build:firefox`. Note that Firefox's cookie format differs from Chrome's and cannot be mixed.
 
-[python2](https://github.com/easychen/CookieCloud/issues/76)
+![](images/20230121092535.png)
 
-[another example](examples/decrypt.py)
+## License
 
-## Go Decryption Algorithm
-
-[Thanks to sagan for sharing](https://github.com/easychen/CookieCloud/issues/49) 
-
-```go
-package main
-
-import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"hash"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-)
-
-const (
-	pkcs5SaltLen = 8
-	aes256KeyLen = 32
-)
-
-type CookieCloudBody struct {
-	Uuid      string `json:"uuid,omitempty"`
-	Encrypted string `json:"encrypted,omitempty"`
-}
-
-func main() {
-	apiUrl := strings.TrimSuffix(os.Getenv("COOKIE_CLOUD_HOST"), "/")
-	uuid := os.Getenv("COOKIE_CLOUD_UUID")
-	password := os.Getenv("COOKIE_CLOUD_PASSWORD")
-
-	if apiUrl == "" || uuid == "" || password == "" {
-		log.Fatalf("COOKIE_CLOUD_HOST, COOKIE_CLOUD_UUID and COOKIE_CLOUD_PASSWORD env must be set")
-	}
-	var data *CookieCloudBody
-	res, err := http.Get(apiUrl + "/get/" + uuid)
-	if err != nil {
-		log.Fatalf("Failed to request server: %v", err)
-	}
-	if res.StatusCode != 200 {
-		log.Fatalf("Server return status %d", res.StatusCode)
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		log.Fatalf("Failed to read server response: %v", err)
-	}
-	err = json.Unmarshal(body, &data)
-	if err != nil {
-		log.Fatalf("Failed to parse server response as json: %v", err)
-	}
-	keyPassword := Md5String(uuid, "-", password)[:16]
-	decrypted, err := DecryptCryptoJsAesMsg(keyPassword, data.Encrypted)
-	if err != nil {
-		log.Fatalf("Failed to decrypt: %v", err)
-	}
-	fmt.Printf("Decrypted: %s\n", decrypted)
-}
-
-// Decrypt a CryptoJS.AES.encrypt(msg, password) encrypted msg.
-// ciphertext is the result of CryptoJS.AES.encrypt(), which is the base64 string of
-// "Salted__" + [8 bytes random salt] + [actual ciphertext].
-// actual ciphertext is padded (make it's length align with block length) using Pkcs7.
-// CryptoJS use a OpenSSL-compatible EVP_BytesToKey to derive (key,iv) from (password,salt),
-// using md5 as hash type and 32 / 16 as length of key / block.
-// See: https://stackoverflow.com/questions/35472396/how-does-cryptojs-get-an-iv-when-none-is-specified ,
-// https://stackoverflow.com/questions/64797987/what-is-the-default-aes-config-in-crypto-js
-func DecryptCryptoJsAesMsg(password string, ciphertext string) ([]byte, error) {
-	const keylen = 32
-	const blocklen = 16
-	rawEncrypted, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to base64 decode Encrypted: %v", err)
-	}
-	if len(rawEncrypted) < 17 || len(rawEncrypted)%blocklen != 0 || string(rawEncrypted[:8]) != "Salted__" {
-		return nil, fmt.Errorf("invalid ciphertext")
-	}
-	salt := rawEncrypted[8:16]
-	encrypted := rawEncrypted[16:]
-	key, iv := BytesToKey(salt, []byte(password), md5.New(), keylen, blocklen)
-	newCipher, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create aes cipher: %v", err)
-	}
-	cfbdec := cipher.NewCBCDecrypter(newCipher, iv)
-	decrypted := make([]byte, len(encrypted))
-	cfbdec.CryptBlocks(decrypted, encrypted)
-	decrypted, err = pkcs7strip(decrypted, blocklen)
-	if err != nil {
-		return nil, fmt.Errorf("failed to strip pkcs7 paddings (password may be incorrect): %v", err)
-	}
-	return decrypted, nil
-}
-
-// From https://github.com/walkert/go-evp .
-// BytesToKey implements the Openssl EVP_BytesToKey logic.
-// It takes the salt, data, a hash type and the key/block length used by that type.
-// As such it differs considerably from the openssl method in C.
-func BytesToKey(salt, data []byte, h hash.Hash, keyLen, blockLen int) (key, iv []byte) {
-	saltLen := len(salt)
-	if saltLen > 0 && saltLen != pkcs5SaltLen {
-		panic(fmt.Sprintf("Salt length is %d, expected %d", saltLen, pkcs5SaltLen))
-	}
-	var (
-		concat   []byte
-		lastHash []byte
-		totalLen = keyLen + blockLen
-	)
-	for ; len(concat) < totalLen; h.Reset() {
-		// concatenate lastHash, data and salt and write them to the hash
-		h.Write(append(lastHash, append(data, salt...)...))
-		// passing nil to Sum() will return the current hash value
-		lastHash = h.Sum(nil)
-		// append lastHash to the running total bytes
-		concat = append(concat, lastHash...)
-	}
-	return concat[:keyLen], concat[keyLen:totalLen]
-}
-
-// BytesToKeyAES256CBC implements the SHA256 version of EVP_BytesToKey using AES CBC
-func BytesToKeyAES256CBC(salt, data []byte) (key []byte, iv []byte) {
-	return BytesToKey(salt, data, sha256.New(), aes256KeyLen, aes.BlockSize)
-}
-
-// BytesToKeyAES256CBCMD5 implements the MD5 version of EVP_BytesToKey using AES CBC
-func BytesToKeyAES256CBCMD5(salt, data []byte) (key []byte, iv []byte) {
-	return BytesToKey(salt, data, md5.New(), aes256KeyLen, aes.BlockSize)
-}
-
-// return the MD5 hex hash string (lower-case) of input string(s)
-func Md5String(inputs ...string) string {
-	keyHash := md5.New()
-	for _, str := range inputs {
-		io.WriteString(keyHash, str)
-	}
-	return hex.EncodeToString(keyHash.Sum(nil))
-}
-
-// from https://gist.github.com/nanmu42/b838acc10d393bc51cb861128ce7f89c .
-// pkcs7strip remove pkcs7 padding
-func pkcs7strip(data []byte, blockSize int) ([]byte, error) {
-	length := len(data)
-	if length == 0 {
-		return nil, errors.New("pkcs7: Data is empty")
-	}
-	if length%blockSize != 0 {
-		return nil, errors.New("pkcs7: Data is not block-aligned")
-	}
-	padLen := int(data[length-1])
-	ref := bytes.Repeat([]byte{byte(padLen)}, padLen)
-	if padLen > blockSize || padLen == 0 || !bytes.HasSuffix(data, ref) {
-		return nil, errors.New("pkcs7: Invalid padding")
-	}
-	return data[:length-padLen], nil
-}
-
-```
-
-
-## Deno Reference
-
-[Thanks to JokerQyou for sharing](https://github.com/easychen/CookieCloud/issues/41)
-
-```ts
-import {crypto, toHashString} from 'https://deno.land/std@0.200.0/crypto/mod.ts'
-import {decode } from 'https://deno.land/std@0.200.0/encoding/base64.ts'
-
-const evpkdf = async (
-  password: Uint8Array,
-  salt: Uint8Array,
-  iterations: number,
-): Promise<{
-  key: Uint8Array,
-  iv: Uint8Array,
-}> => {
-  const keySize = 32
-  const ivSize = 16
-  const derivedKey = new Uint8Array(keySize + ivSize)
-  let currentBlock = 1
-  let digest = new Uint8Array(0)
-  const hashLength = 16
-  while ((currentBlock - 1) * hashLength < keySize + ivSize) {
-    const data = new Uint8Array(digest.length + password.length + salt.length)
-    data.set(digest)
-    data.set(password, digest.length)
-    data.set(salt, digest.length + password.length)
-    digest = await crypto.subtle.digest('MD5', data).then(buf => new Uint8Array(buf))
-
-    for (let i = 1; i < iterations; i++) {
-      digest = await crypto.subtle.digest('MD5', digest).then(buf => new Uint8Array(buf))
-    }
-    derivedKey.set(digest, (currentBlock - 1) * hashLength)
-    currentBlock++
-  }
-  return {
-    key: derivedKey.slice(0, keySize),
-    iv: derivedKey.slice(keySize),
-  }
-}
-
-const main = async (env: Record<string, string>) => {
-  const {
-    COOKIE_CLOUD_HOST: CC_HOST,
-    COOKIE_CLOUD_UUID: CC_UUID,
-    COOKIE_CLOUD_PASSWORD: CC_PW,
-  } = env
-  const resp = await fetch(`${CC_HOST}/get/${CC_UUID}`).then(r => r.json())
-  console.log(resp)
-  let cookies = []
-  if (resp && resp.encrypted)  {
-    console.log(resp.encrypted)
-    console.log(new TextDecoder().decode(decode(resp.encrypted)).slice(0, 16))
-    const decoded = decode(resp.encrypted)
-    // Salted__ + 8 bytes salt, followed by cipher text
-    const salt = decoded.slice(8, 16)
-    const cipher_text = decoded.slice(16)
-
-    const password = await crypto.subtle.digest(
-      'MD5',
-      new TextEncoder().encode(`${CC_UUID}-${CC_PW}`),
-    ).then(
-      buf => toHashString(buf).substring(0, 16)
-    ).then(
-      p => new TextEncoder().encode(p)
-    )
-    const {key, iv} = await evpkdf(password, salt, 1)
-    const privete_key = await crypto.subtle.importKey(
-      'raw',
-      key,
-      'AES-CBC',
-      false,
-      ['decrypt'],
-    )
-
-    const d = await crypto.subtle.decrypt(
-      {name: 'AES-CBC', iv},
-      privete_key,
-      cipher_text,
-    )
-    console.log('decrypted:', new TextDecoder().decode(d))
-}
-```
-
-Translated by GPT4
-
-
+[GPLv3](./LICENSE)

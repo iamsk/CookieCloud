@@ -2,91 +2,113 @@
 
 [中文](./README_cn.md) | [English](./README.md)
 
-![](extension/assets/icon.png)
+![](ext/public/icon/icon.png)
 
-CookieCloud是一个和自架服务器同步Cookie的小工具，可以将浏览器的Cookie及Local storage同步到手机和云端，它内置端对端加密，可设定同步时间间隔。
+CookieCloud 是一个和自架服务器同步 Cookie 的小工具，可以将浏览器的 Cookie 及 Local Storage 同步到手机和云端，内置端对端加密，可设定同步时间间隔。
 
-> 0.3.0 版本改用 wxt 重写了，支持固定 IV 的加密算法，解密时支持更多的标准库，详见 wxt 分支
+当前版本使用 **[wxt](https://wxt.dev)** 重写（Manifest V3，React + TypeScript），支持同域名下 Local Storage 的同步，并提供两种加密算法：原有的 CryptoJS 算法（动态 IV）和标准的 **AES-128-CBC** 算法（固定 IV，便于任意语言的主流加密库解密）。
 
-> 最新版本支持了对同域名下local storage的同步
+[Telegram 频道](https://t.me/CookieCloudTG) | [Telegram 交流群](https://t.me/CookieCloudGroup)
 
-[Telegram频道](https://t.me/CookieCloudTG) | [Telegram交流群](https://t.me/CookieCloudGroup)
+## 仓库结构
 
-## ⚠️ Breaking Change
+这是一个 monorepo，每个顶层目录都是一个独立模块：
 
-由于支持 local storage 的呼声很高，因此插件版本 0.1.5+ 除了 cookie 也支持了 local storage，这导致加密文本格式变化（从独立cookie对象变成{ cookie_data, local_storage_data }）。
+| 目录 | 技术栈 | 职责 |
+| ---- | ------ | ---- |
+| [`ext/`](#ext--浏览器扩展) | wxt + React + TypeScript + Tailwind | 浏览器扩展——采集 Cookie / Local Storage，加密后与服务器同步。项目的核心。 |
+| [`api/`](#api--服务器端) | Node.js + Express | 当前的服务器端。按 UUID 存储加密后的密文并按需返回。 |
+| [`docker/`](#docker--发布镜像) | Node.js + Express | 用于构建已发布的 `easychen/cookiecloud` Docker 镜像的精简服务端。 |
+| [`web/`](#web--落地页) | Vite + React + Tailwind | 双语营销 / 落地页，不参与同步。 |
+| [`examples/`](#examples--解密与使用示例) | 多语言 | 解密 CookieCloud 数据以及在无头浏览器中使用的参考实现。 |
+| `design/` | Adobe XD | Logo 源文件（`logo.xd`）。 |
+| `.github/` | GitHub Actions | 打 tag 时构建 Chrome/Firefox 扩展并发布到商店的 CI。 |
+| `RoboFile.php` | Robo | 本地开发、Docker 镜像、扩展构建的任务快捷方式。 |
 
-另外，为避免配置同步导致的上下行冲突，配置存储从 remote 改到了 local，使用之前版本的同学需要重新配置一下。
+### `ext/` — 浏览器扩展
 
-对此带来的不便深表歉意 🙇🏻‍♂️
+扩展是唯一会接触你 Cookie 的组件，使用 [wxt](https://wxt.dev) 构建，以 Manifest V3 发布。
 
+- **`entrypoints/popup/App.tsx`** — React 配置界面。可设置工作模式（上传 / 覆盖 / 暂停）、服务器地址、UUID、端对端密码、加密算法、Cookie 过期时间、同步间隔、是否包含 Local Storage、附加请求 Header、同步域名关键词、域名黑名单以及 Keep Alive 的 URL。配置以 `COOKIE_SYNC_SETTING` 为键保存在本地。
+- **`entrypoints/background.ts`** — 后台 Service Worker。注册一个 1 分钟的 alarm，每次触发时读取配置，当经过的分钟数能被同步间隔整除时执行上传或下载（暂停模式则跳过）。同时实现 **Cookie Keep Alive**：定期在后台标签页打开指定 URL 以保持会话活跃。
+- **`entrypoints/content.ts`** — 注入到所有页面的内容脚本。上传模式下读取页面的 `localStorage` 并暂存到扩展存储的 `LS-<host>`；覆盖（down）模式下把此前同步的 `LS-<host>` 写回页面的 `localStorage`。由于后台 Worker 无法直接读取页面 `localStorage`，Local Storage 的同步正是通过它实现的。
+- **`utils/functions.ts`** — 核心逻辑，**也是唯一进行加密的地方**。按域名 / 黑名单采集 Cookie，收集 Local Storage，执行 `cookie_encrypt` / `cookie_decrypt`，上传（gzip 压缩，并带 24 小时 SHA-256 去重，内容未变则不重复上传），以及下载（通过 `browser.cookies.set` 写入 Cookie，并存下 Local Storage 供内容脚本应用）。详见[加解密算法](#cookie-加解密算法)。
+- **`utils/messaging.ts`** — 轻量分发器，将配置载荷路由到 `upload_cookie` 或 `download_cookie`。
+- **`public/_locales/`** — `en` 与 `zh_CN` 的 i18n 文案。
+- **`wxt.config.ts`** — wxt/manifest 配置。申请的权限：`cookies`、`tabs`、`storage`、`alarms`、`unlimitedStorage` 以及 `<all_urls>` 主机访问。
+- **`scripts/release.mjs`** — 交互式发布脚本，负责升版本号、提交、打 tag（`build-v*` / `release-v*`）并推送以触发 CI。
 
-## 官方教程
+### `api/` — 服务器端
 
-![](images/20230121141854.png)  
+可自托管的 Express 服务（`api/app.js`）。服务器永远拿不到你的密码，只存储密文。
 
-1. 视频教程：[B站](https://www.bilibili.com/video/BV1fR4y1a7zb) | [Youtube](https://youtu.be/3oeSiGHXeQw) 求关注求订阅🥺
-1. 图文教程：[掘金](https://juejin.cn/post/7190963442017108027)
+- `POST /update` — 将 `{ encrypted, crypto_type }` 保存到 `data/<uuid>.json`。
+- `GET|POST /get/:uuid` — 返回存储的数据。若请求体带 `password` 则在服务端解密并返回解析后的对象，否则返回原始密文字符串。可用 `?crypto_type=` 查询参数指定算法。
+- `GET /health` — 健康检查。
+- 已加固：CORS、gzip 压缩、限流（单 IP 每 15 分钟 100 次请求）、Winston 文件日志（`api/utils/logger.js`）以及优雅关闭。
 
-## FAQ
+### `docker/` — 发布镜像
 
-1. 目前只支持单向同步，即一个浏览器上传，一个浏览器下载
-2. 浏览器扩展只官方支持 Chrome 和 Edge。其他 Chrome 内核浏览器可用，但未经测试。使用源码 `cd extension && pnpm build --target=firefox-mv2` 可自行编译 Firefox 版本，注意 Firefox 的 Cookie 格式和 Chrome 系有差异，不能混用
+精简版服务端（`docker/app.js`）加 `docker/Dockerfile`（基于 `node:16-alpine`），是已发布的 [`easychen/cookiecloud`](https://hub.docker.com/r/easychen/cookiecloud) 镜像的源。提供同样的 `/update` 与 `/get/:uuid` 接口。
 
-![](images/20230121092535.png)  
+### `web/` — 落地页
+
+一个静态的 Vite + React + Tailwind 落地页（中英双语），用于宣传项目并链接到商店。纯展示用途，不参与同步流程。
+
+### `examples/` — 解密与使用示例
+
+- **`examples/decrypt.py`** — 获取并解密数据的 Python 脚本，同时支持两种加密算法。
+- **`examples/fixediv/`** — `aes-128-cbc-fixed` 算法在 **Node.js、Python、Java（Maven 版与零依赖版）、Go、PHP** 中可直接运行的解密实现，附带共享测试数据和跨语言验证脚本 `test_all.sh`。
+- **`examples/playwright/`** — 拉取云端 Cookie 并注入 Playwright 上下文的无头浏览器示例。
 
 ## 浏览器插件
 
-1. 商店安装：[Edge商店](https://microsoftedge.microsoft.com/addons/detail/cookiecloud/bffenpfpjikaeocaihdonmgnjjdpjkeo) | [Chrome商店](https://chrome.google.com/webstore/detail/cookiecloud/ffjiejobkoibkjlhjnlgmcnnigeelbdl)（ 注意：商店版本会因审核有延迟
-1. 手动下载安装：见 Release
+1. 商店安装：[Edge 商店](https://microsoftedge.microsoft.com/addons/detail/cookiecloud/bffenpfpjikaeocaihdonmgnjjdpjkeo) | [Chrome 商店](https://chrome.google.com/webstore/detail/cookiecloud/ffjiejobkoibkjlhjnlgmcnnigeelbdl)（商店版本因审核会有延迟）。
+2. 手动下载安装：见 Release。
 
-## 服务器端
+### 从源码构建
 
-### 官方测试服务器
+```bash
+cd ext
+pnpm install
+pnpm build:chrome      # 或：pnpm build:firefox
+pnpm zip:chrome        # 打包成可分发的 zip
+```
 
-> 仅供测试使用，不保证稳定性，建议自行搭建以进一步加强数据安全
+> Firefox 的 Cookie 格式与 Chrome 系有差异，两者不能混用。
 
-- <https://ccc.ft07.com>
+## 官方教程
 
-### 第三方
+![](images/20230121141854.png)
 
-> 由第三方提供的免费服务器端，可供试用，稳定性由第三方决定。感谢他们的分享 👏
+1. 视频教程：[B站](https://www.bilibili.com/video/BV1fR4y1a7zb) | [Youtube](https://youtu.be/3oeSiGHXeQw)
+2. 图文教程：[掘金](https://juejin.cn/post/7190963442017108027)
 
-> 由于部分服务器端版本较久，如测试提示失败可添加域名关键词再试
+## 服务器端 · 自行架设
 
-- <http://45.138.70.177:8088> 由[LSRNB](https://github.com/lsrnb)提供
-- <http://45.145.231.148:8088> 由[shellingford37](https://github.com/shellingford37)提供
-- <http://nastool.cn:8088> 由[nastools](https://github.com/jxxghp/nas-tools)提供
-- <https://cookies.xm.mk> 由[Xm798](https://github.com/Xm798)提供
-- <https://cookie.xy213.cn> 由[xuyan0213](https://github.com/xuyan0213)提供
-- <https://cookie-cloud.vantis-space.com> 由[vantis](https://github.com/vantis-zh)提供
-- <https://cookiecloud.25wz.cn> 由[wuquejs](https://github.com/wuquejs)提供
-- <https://cookiecloud.zhensnow.uk> 由[YeTianXingShi](https://github.com/YeTianXingShi)提供
-- <https://cookiecloud.ddsrem.com> 由[DDSRem](https://github.com/DDS-Derek)提供
-- <https://cookiecloud.d0zingcat.xyz> 由[d0zingcat](https://github.com/d0zingcat)提供
+> 自行架设服务器可以让数据完全掌握在自己手中。
 
-### 自行架设
+### 方案一：Docker（简单、推荐）
 
-#### 方案一：通过Docker部署，简单、推荐方案
+支持架构：linux/amd64、linux/arm64 等。
 
-支持架构：linux/amd64,linux/arm/v7,linux/arm64/v8,linux/ppc64le,linux/s390x
-
-##### 用 Docker 命令启动
+#### 用 Docker 命令启动
 
 ```bash
 docker run -p=8088:8088 easychen/cookiecloud:latest
 ```
-默认端口 8088 ，镜像地址 [easychen/cookiecloud](https://hub.docker.com/r/easychen/cookiecloud)
 
-###### 指定API目录·可选步骤可跳过
+默认端口 8088，镜像地址 [easychen/cookiecloud](https://hub.docker.com/r/easychen/cookiecloud)。
 
-添加环境变量 -e API_ROOT=/`二级目录需要以斜杠开头` 可以指定二级目录:
+##### 指定 API 子目录（可选）
+
+添加环境变量 `-e API_ROOT=/二级目录`（需以斜杠开头）即可指定二级目录：
 
 ```bash
 docker run -e API_ROOT=/cookie -p=8088:8088 easychen/cookiecloud:latest
 ```
 
-##### 用 Docker-compose 启动
+#### 用 Docker Compose 启动
 
 ```yml
 version: '3'
@@ -101,386 +123,158 @@ services:
       - 8088:8088
 ```
 
-[docker-compose.yml由aitixiong提供](https://github.com/easychen/CookieCloud/issues/42)
+[docker-compose.yml 由 aitixiong 提供](https://github.com/easychen/CookieCloud/issues/42)
 
-#### 方案二：通过 Node 部署
+### 方案二：Node
 
-> 适用于没有 docker 但支持 node 的环境，需要自行先安装 node
+> 适用于没有 Docker 但已安装 Node 的环境。
 
 ```bash
 cd api && yarn install && node app.js
 ```
-默认端口 8088 ，同样也支持 API_ROOT 环境变量
+
+默认端口 8088，同样支持 `API_ROOT` 环境变量。
 
 ## 调试和日志查看
 
-进入浏览器插件列表，点击 service worker，会弹出一个面板，可查看运行日志
+进入浏览器插件列表，点击 CookieCloud 的 service worker，会弹出一个面板，可查看运行日志。
 
-![](images/20230121095327.png)  
+![](images/20230121095327.png)
 
 ## API 接口
 
 上传：
 
-- method: POST
-- url: /update
-- 参数
-  - uuid
-  - encrypted: 本地加密后的字符串
+- method：`POST`
+- url：`/update`
+- 参数：
+  - `uuid`
+  - `encrypted`：本地加密后的字符串
+  - `crypto_type`：可选，所用算法（`legacy` 或 `aes-128-cbc-fixed`）
 
 下载：
 
-- method: POST/GET
-- url: /get/:uuid
+- method：`POST` / `GET`
+- url：`/get/:uuid`
 - 参数：
-   - password:可选，不提供返回加密后的字符串，提供则发送尝试解密后的内容；
+  - `password`：可选。不提供则返回加密后的字符串，提供则在服务端解密并返回内容。
+  - `crypto_type`：可选查询参数，用于强制指定算法。
 
+## Cookie 加解密算法
 
-## Cookie加解密算法
+CookieCloud 是端对端加密的：**UUID** 与 **密码** 不会一起离开你的浏览器，服务器只存储密文。加密与解密都位于 [`ext/utils/functions.ts`](ext/utils/functions.ts)。
 
-### 加密
+### 密钥推导（两种算法共用）
 
-const data = JSON.stringify(cookies);
+```
+the_key = MD5(uuid + '-' + password).hex().substring(0, 16)   // 16 个字符的字符串
+```
 
-1. md5(uuid+password) 取前16位作为key
-2. AES.encrypt(data, the_key)
+### 明文格式
 
-### 解密
+加密前的载荷是如下 JSON：
 
-1. md5(uuid+password) 取前16位作为key
-2. AES.decrypt(encrypted, the_key)
-
-解密后得到 data ，JSON.parse(data) 得到数据对象{ cookie_data, local_storage_data };
-
-参考函数
-
-```node
-function cookie_decrypt( uuid, encrypted, password )
+```json
 {
-    const CryptoJS = require('crypto-js');
-    const the_key = CryptoJS.MD5(uuid+'-'+password).toString().substring(0,16);
-    const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
-    const parsed = JSON.parse(decrypted);
-    return parsed;
+  "cookie_data": { "<域名>": [ /* cookie 对象 */ ] },
+  "local_storage_data": { "LS-<host>": { "<key>": "<value>" } },
+  "update_time": "<ISO 时间戳>"
 }
 ```
 
-`extension/function.js` 查看更多
+解密后再 `JSON.parse` 得到 `{ cookie_data, local_storage_data }`。
 
-## 无头浏览器使用CookieCloud示例
+### 算法一 — `legacy`（默认，「CryptoJS / 动态 IV」）
 
-请参考 `examples/playwright/tests/example.spec.js` 
+`the_key` 作为**口令（passphrase）**传给 CryptoJS。CryptoJS 生成随机的 8 字节 salt，并用 OpenSSL 的 `EVP_BytesToKey`（MD5）派生出真正的 key + IV，得到 **AES-256-CBC**、PKCS7 填充。输出为 OpenSSL 的 `"Salted__" + salt + 密文` 信封并经 Base64 编码——因此每条消息的 IV 都是随机且不同的。
+
+```js
+function cookie_decrypt(uuid, encrypted, password) {
+  const CryptoJS = require('crypto-js');
+  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
+  const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
+  return JSON.parse(decrypted);
+}
+```
+
+### 算法二 — `aes-128-cbc-fixed`（标准，「固定 IV」）
+
+`the_key` 被**直接作为 AES-128 的 16 字节原始密钥**使用，配合**固定的全零 IV**和 PKCS7 填充。输出为原始密文的 Base64（无 `Salted__` 信封）。由于没有自定义 KDF 或 salt 头，这种格式可以用任意语言的标准加密库轻松解密。
+
+- 算法：AES-128-CBC
+- 密钥：`MD5(uuid + '-' + password).substring(0, 16)`（作为 UTF-8 字节）
+- IV：16 个零字节
+- 填充：PKCS7
+- 编码：Base64
+
+```js
+function cookie_decrypt_fixed(uuid, encrypted, password) {
+  const CryptoJS = require('crypto-js');
+  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
+  const options = {
+    iv: CryptoJS.enc.Hex.parse('00000000000000000000000000000000'),
+    mode: CryptoJS.mode.CBC,
+    padding: CryptoJS.pad.Pkcs7,
+  };
+  const decrypted = CryptoJS.AES
+    .decrypt(encrypted, CryptoJS.enc.Utf8.parse(the_key), options)
+    .toString(CryptoJS.enc.Utf8);
+  return JSON.parse(decrypted);
+}
+```
+
+### 其他语言的解密
+
+- **`aes-128-cbc-fixed`** — Node.js、Python、Java、Go、PHP 的可直接运行实现位于 [`examples/fixediv/`](examples/fixediv/)，并附带验证它们输出一致的 `test_all.sh`。
+- **`legacy`** — Python 及其他语言参考：见 [`examples/decrypt.py`](examples/decrypt.py)、[PyCookieCloud](https://github.com/lupohan44/PyCookieCloud)、[Python 加解密文章](https://blog.homurax.com/2022/08/12/python-crypto/)、[Go 参考](https://github.com/easychen/CookieCloud/issues/49) 以及 [Deno 参考](https://github.com/easychen/CookieCloud/issues/41)。
+
+## 无头浏览器使用 CookieCloud
+
+请参考 [`examples/playwright/tests/example.spec.js`](examples/playwright/tests/example.spec.js)。
 
 ```javascript
 test('使用CookieCloud访问nexusphp', async ({ page, browser }) => {
-  // 读取云端cookie并解密
+  // 读取云端 cookie 并解密
   const cookies = await cloud_cookie(COOKIE_CLOUD_HOST, COOKIE_CLOUD_UUID, COOKIE_CLOUD_PASSWORD);
-  // 添加cookie到浏览器上下文
+  // 注入到全新的浏览器上下文
   const context = await browser.newContext();
   await context.addCookies(cookies);
   page = await context.newPage();
-  // 这之后已经带着Cookie了，按正常流程访问
+  // 这之后请求已带着 Cookie，按正常流程访问
   await page.goto('https://demo.nexusphp.org/index.php');
-  await expect(page.getByRole('link', { name: 'magik' })).toHaveText("magik");
+  await expect(page.getByRole('link', { name: 'magik' })).toHaveText('magik');
   await context.close();
 });
-
 ```
 
-### 函数
-
 ```javascript
-async function cloud_cookie( host, uuid, password )
-{
+async function cloud_cookie(host, uuid, password, crypto_type = 'legacy') {
   const fetch = require('cross-fetch');
-  const url = host+'/get/'+uuid;
-  const ret = await fetch(url);
-  const json = await ret.json();
+  let url = host + '/get/' + uuid;
+  if (crypto_type && crypto_type !== 'legacy') url += `?crypto_type=${crypto_type}`;
+  const json = await (await fetch(url)).json();
   let cookies = [];
-  if( json && json.encrypted )
-  {
-    const {cookie_data, local_storage_data} = cookie_decrypt(uuid, json.encrypted, password);
-    for( const key in cookie_data )
-    {
-      // merge cookie_data[key] to cookies
-      cookies = cookies.concat(cookie_data[key].map( item => {
-        if( item.sameSite == 'unspecified' ) item.sameSite = 'Lax';
+  if (json && json.encrypted) {
+    const useCryptoType = crypto_type || json.crypto_type || 'legacy';
+    const { cookie_data } = cookie_decrypt(uuid, json.encrypted, password, useCryptoType);
+    for (const key in cookie_data) {
+      cookies = cookies.concat(cookie_data[key].map(item => {
+        if (item.sameSite == 'unspecified') item.sameSite = 'Lax';
         return item;
-      } ));
+      }));
     }
   }
   return cookies;
 }
-
-function cookie_decrypt( uuid, encrypted, password )
-{
-    const CryptoJS = require('crypto-js');
-    const the_key = CryptoJS.MD5(uuid+'-'+password).toString().substring(0,16);
-    const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
-    const parsed = JSON.parse(decrypted);
-    return parsed;
-}
 ```
 
-## Python 解密
+## FAQ
 
-可参考这篇文章 [《Python 中 Crypto 对 JS 中 CryptoJS AES 加密解密的实现及问题处理》](https://blog.homurax.com/2022/08/12/python-crypto/) 或使用[PyCookieCloud](https://github.com/lupohan44/PyCookieCloud)
+1. 目前只支持单向同步，即一个浏览器上传，一个浏览器下载。
+2. 浏览器扩展只官方支持 Chrome 和 Edge。其他 Chrome 内核浏览器可用，但未经测试。可用 `cd ext && pnpm build:firefox` 自行编译 Firefox 版本。注意 Firefox 的 Cookie 格式和 Chrome 系有差异，不能混用。
 
-[python2实现](https://github.com/easychen/CookieCloud/issues/76)
+![](images/20230121092535.png)
 
-[另一个使用实例](examples/decrypt.py)
+## 许可协议
 
-## Go 解密算法
-
-[感谢sagan分享](https://github.com/easychen/CookieCloud/issues/49) 
-
-```go
-package main
-
-import (
-	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"hash"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-)
-
-const (
-	pkcs5SaltLen = 8
-	aes256KeyLen = 32
-)
-
-type CookieCloudBody struct {
-	Uuid      string `json:"uuid,omitempty"`
-	Encrypted string `json:"encrypted,omitempty"`
-}
-
-func main() {
-	apiUrl := strings.TrimSuffix(os.Getenv("COOKIE_CLOUD_HOST"), "/")
-	uuid := os.Getenv("COOKIE_CLOUD_UUID")
-	password := os.Getenv("COOKIE_CLOUD_PASSWORD")
-
-	if apiUrl == "" || uuid == "" || password == "" {
-		log.Fatalf("COOKIE_CLOUD_HOST, COOKIE_CLOUD_UUID and COOKIE_CLOUD_PASSWORD env must be set")
-	}
-	var data *CookieCloudBody
-	res, err := http.Get(apiUrl + "/get/" + uuid)
-	if err != nil {
-		log.Fatalf("Failed to request server: %v", err)
-	}
-	if res.StatusCode != 200 {
-		log.Fatalf("Server return status %d", res.StatusCode)
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		log.Fatalf("Failed to read server response: %v", err)
-	}
-	err = json.Unmarshal(body, &data)
-	if err != nil {
-		log.Fatalf("Failed to parse server response as json: %v", err)
-	}
-	keyPassword := Md5String(uuid, "-", password)[:16]
-	decrypted, err := DecryptCryptoJsAesMsg(keyPassword, data.Encrypted)
-	if err != nil {
-		log.Fatalf("Failed to decrypt: %v", err)
-	}
-	fmt.Printf("Decrypted: %s\n", decrypted)
-}
-
-// Decrypt a CryptoJS.AES.encrypt(msg, password) encrypted msg.
-// ciphertext is the result of CryptoJS.AES.encrypt(), which is the base64 string of
-// "Salted__" + [8 bytes random salt] + [actual ciphertext].
-// actual ciphertext is padded (make it's length align with block length) using Pkcs7.
-// CryptoJS use a OpenSSL-compatible EVP_BytesToKey to derive (key,iv) from (password,salt),
-// using md5 as hash type and 32 / 16 as length of key / block.
-// See: https://stackoverflow.com/questions/35472396/how-does-cryptojs-get-an-iv-when-none-is-specified ,
-// https://stackoverflow.com/questions/64797987/what-is-the-default-aes-config-in-crypto-js
-func DecryptCryptoJsAesMsg(password string, ciphertext string) ([]byte, error) {
-	const keylen = 32
-	const blocklen = 16
-	rawEncrypted, err := base64.StdEncoding.DecodeString(ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("failed to base64 decode Encrypted: %v", err)
-	}
-	if len(rawEncrypted) < 17 || len(rawEncrypted)%blocklen != 0 || string(rawEncrypted[:8]) != "Salted__" {
-		return nil, fmt.Errorf("invalid ciphertext")
-	}
-	salt := rawEncrypted[8:16]
-	encrypted := rawEncrypted[16:]
-	key, iv := BytesToKey(salt, []byte(password), md5.New(), keylen, blocklen)
-	newCipher, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create aes cipher: %v", err)
-	}
-	cfbdec := cipher.NewCBCDecrypter(newCipher, iv)
-	decrypted := make([]byte, len(encrypted))
-	cfbdec.CryptBlocks(decrypted, encrypted)
-	decrypted, err = pkcs7strip(decrypted, blocklen)
-	if err != nil {
-		return nil, fmt.Errorf("failed to strip pkcs7 paddings (password may be incorrect): %v", err)
-	}
-	return decrypted, nil
-}
-
-// From https://github.com/walkert/go-evp .
-// BytesToKey implements the Openssl EVP_BytesToKey logic.
-// It takes the salt, data, a hash type and the key/block length used by that type.
-// As such it differs considerably from the openssl method in C.
-func BytesToKey(salt, data []byte, h hash.Hash, keyLen, blockLen int) (key, iv []byte) {
-	saltLen := len(salt)
-	if saltLen > 0 && saltLen != pkcs5SaltLen {
-		panic(fmt.Sprintf("Salt length is %d, expected %d", saltLen, pkcs5SaltLen))
-	}
-	var (
-		concat   []byte
-		lastHash []byte
-		totalLen = keyLen + blockLen
-	)
-	for ; len(concat) < totalLen; h.Reset() {
-		// concatenate lastHash, data and salt and write them to the hash
-		h.Write(append(lastHash, append(data, salt...)...))
-		// passing nil to Sum() will return the current hash value
-		lastHash = h.Sum(nil)
-		// append lastHash to the running total bytes
-		concat = append(concat, lastHash...)
-	}
-	return concat[:keyLen], concat[keyLen:totalLen]
-}
-
-// BytesToKeyAES256CBC implements the SHA256 version of EVP_BytesToKey using AES CBC
-func BytesToKeyAES256CBC(salt, data []byte) (key []byte, iv []byte) {
-	return BytesToKey(salt, data, sha256.New(), aes256KeyLen, aes.BlockSize)
-}
-
-// BytesToKeyAES256CBCMD5 implements the MD5 version of EVP_BytesToKey using AES CBC
-func BytesToKeyAES256CBCMD5(salt, data []byte) (key []byte, iv []byte) {
-	return BytesToKey(salt, data, md5.New(), aes256KeyLen, aes.BlockSize)
-}
-
-// return the MD5 hex hash string (lower-case) of input string(s)
-func Md5String(inputs ...string) string {
-	keyHash := md5.New()
-	for _, str := range inputs {
-		io.WriteString(keyHash, str)
-	}
-	return hex.EncodeToString(keyHash.Sum(nil))
-}
-
-// from https://gist.github.com/nanmu42/b838acc10d393bc51cb861128ce7f89c .
-// pkcs7strip remove pkcs7 padding
-func pkcs7strip(data []byte, blockSize int) ([]byte, error) {
-	length := len(data)
-	if length == 0 {
-		return nil, errors.New("pkcs7: Data is empty")
-	}
-	if length%blockSize != 0 {
-		return nil, errors.New("pkcs7: Data is not block-aligned")
-	}
-	padLen := int(data[length-1])
-	ref := bytes.Repeat([]byte{byte(padLen)}, padLen)
-	if padLen > blockSize || padLen == 0 || !bytes.HasSuffix(data, ref) {
-		return nil, errors.New("pkcs7: Invalid padding")
-	}
-	return data[:length-padLen], nil
-}
-
-```
-
-
-## Deno 参考
-
-[感谢JokerQyou分享](https://github.com/easychen/CookieCloud/issues/41)
-
-```ts
-import {crypto, toHashString} from 'https://deno.land/std@0.200.0/crypto/mod.ts'
-import {decode } from 'https://deno.land/std@0.200.0/encoding/base64.ts'
-
-const evpkdf = async (
-  password: Uint8Array,
-  salt: Uint8Array,
-  iterations: number,
-): Promise<{
-  key: Uint8Array,
-  iv: Uint8Array,
-}> => {
-  const keySize = 32
-  const ivSize = 16
-  const derivedKey = new Uint8Array(keySize + ivSize)
-  let currentBlock = 1
-  let digest = new Uint8Array(0)
-  const hashLength = 16
-  while ((currentBlock - 1) * hashLength < keySize + ivSize) {
-    const data = new Uint8Array(digest.length + password.length + salt.length)
-    data.set(digest)
-    data.set(password, digest.length)
-    data.set(salt, digest.length + password.length)
-    digest = await crypto.subtle.digest('MD5', data).then(buf => new Uint8Array(buf))
-
-    for (let i = 1; i < iterations; i++) {
-      digest = await crypto.subtle.digest('MD5', digest).then(buf => new Uint8Array(buf))
-    }
-    derivedKey.set(digest, (currentBlock - 1) * hashLength)
-    currentBlock++
-  }
-  return {
-    key: derivedKey.slice(0, keySize),
-    iv: derivedKey.slice(keySize),
-  }
-}
-
-const main = async (env: Record<string, string>) => {
-  const {
-    COOKIE_CLOUD_HOST: CC_HOST,
-    COOKIE_CLOUD_UUID: CC_UUID,
-    COOKIE_CLOUD_PASSWORD: CC_PW,
-  } = env
-  const resp = await fetch(`${CC_HOST}/get/${CC_UUID}`).then(r => r.json())
-  console.log(resp)
-  let cookies = []
-  if (resp && resp.encrypted)  {
-    console.log(resp.encrypted)
-    console.log(new TextDecoder().decode(decode(resp.encrypted)).slice(0, 16))
-    const decoded = decode(resp.encrypted)
-    // Salted__ + 8 bytes salt, followed by cipher text
-    const salt = decoded.slice(8, 16)
-    const cipher_text = decoded.slice(16)
-
-    const password = await crypto.subtle.digest(
-      'MD5',
-      new TextEncoder().encode(`${CC_UUID}-${CC_PW}`),
-    ).then(
-      buf => toHashString(buf).substring(0, 16)
-    ).then(
-      p => new TextEncoder().encode(p)
-    )
-    const {key, iv} = await evpkdf(password, salt, 1)
-    const privete_key = await crypto.subtle.importKey(
-      'raw',
-      key,
-      'AES-CBC',
-      false,
-      ['decrypt'],
-    )
-
-    const d = await crypto.subtle.decrypt(
-      {name: 'AES-CBC', iv},
-      privete_key,
-      cipher_text,
-    )
-    console.log('decrypted:', new TextDecoder().decode(d))
-}
-```
-
-
+[GPLv3](./LICENSE)
