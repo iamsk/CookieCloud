@@ -4,9 +4,9 @@
 
 ![](ext/public/icon/icon.png)
 
-CookieCloud is a small tool for syncing cookies with your self-hosted server. It synchronizes browser cookies and local storage to your phone and the cloud, features built-in end-to-end encryption, and lets you set a synchronization interval.
+CookieCloud is a small tool for syncing cookies with your self-hosted server. It synchronizes browser cookies and local storage to your phone and the cloud, features built-in end-to-end encryption, and syncs automatically on a schedule.
 
-The current version is rewritten with **[wxt](https://wxt.dev)** (Manifest V3, React + TypeScript). It supports syncing local storage under the same domain, and offers two encryption algorithms: the original CryptoJS algorithm (dynamic IV) and a standard **AES-128-CBC** algorithm (fixed IV) that is easy to decrypt with mainstream crypto libraries in any language.
+The current version is rewritten with **[wxt](https://wxt.dev)** (Manifest V3, React + TypeScript). It always syncs local storage alongside cookies and encrypts with a standard **AES-128-CBC** (fixed IV) scheme that is easy to decrypt with mainstream crypto libraries in any language. The extension is driven by a single secret: you set only an end-to-end **password**, and the storage **UUID** is derived from it automatically. The server endpoint is fixed in the build (the `ENDPOINT` constant in [`ext/utils/functions.ts`](ext/utils/functions.ts)). The server and the reference decryptors still understand the older `legacy` CryptoJS format for previously-stored data.
 
 [Telegram channel](https://t.me/CookieCloudTG) | [Telegram group](https://t.me/CookieCloudGroup)
 
@@ -29,10 +29,11 @@ This is a monorepo. Each top-level directory is an independent module:
 
 The extension is the only component that touches your cookies. It is built with [wxt](https://wxt.dev) and ships as Manifest V3.
 
-- **`entrypoints/popup/App.tsx`** — the React configuration UI. Lets you pick the working mode (upload / overwrite / pause), server endpoint, UUID, end-to-end password, encryption algorithm, cookie expiry, sync interval, whether to include local storage, extra request headers, domain keyword filters, a domain blacklist, and "keep alive" URLs. The config is persisted locally under the key `COOKIE_SYNC_SETTING`.
-- **`entrypoints/background.ts`** — the background service worker. It registers a 1-minute alarm; on each tick it reads the saved config and, when the elapsed minutes are divisible by the configured interval, runs an upload or a download (or does nothing in pause mode). It also implements **Cookie Keep Alive**: periodically opening the listed URLs in a background tab to keep sessions alive.
-- **`entrypoints/content.ts`** — a content script injected into every page. In upload mode it reads the page's `localStorage` and stashes it in extension storage under `LS-<host>`. In overwrite ("down") mode it writes the previously-synced values from `LS-<host>` back into the page's `localStorage`. This is how local storage sync is achieved, since the background worker cannot read a page's `localStorage` directly.
-- **`utils/functions.ts`** — the core logic and **the only place encryption happens**. It collects cookies by domain / blacklist, gathers local storage, performs `cookie_encrypt` / `cookie_decrypt`, uploads (gzip-compressed, with a 24-hour SHA-256 de-duplication guard so unchanged data is not re-uploaded), and downloads (writing cookies via `browser.cookies.set` and storing local storage for the content script to apply). See [Encryption](#cookie-encryption-and-decryption-algorithm).
+- **`entrypoints/popup/App.tsx`** — the React configuration UI. A three-state segmented control on the first row picks the working mode (upload / overwrite / pause). The only secret you enter is the end-to-end **password** — the storage UUID is derived from it automatically (via `derive_uuid`) and is never shown or edited. In upload mode it lists every domain the browser has cookies for, grouped by registrable domain, each row with a **sync** checkbox and a **keep-alive** checkbox (both default off), plus a filter box and select-all/clear. The config is persisted locally under the key `COOKIE_SYNC_SETTING`.
+- **`entrypoints/background.ts`** — the background service worker. It registers a 1-minute alarm; on each tick it reads the saved config and, when the elapsed minutes are divisible by the sync interval (default 10), runs an upload or a download (or does nothing in pause mode). It also implements **Cookie Keep Alive**: for every domain whose keep-alive box is checked, it visits `https://<domain>/` in a background tab once per hour to keep the session alive.
+- **`entrypoints/content.ts`** — a content script injected into every page. In upload mode it reads the page's `localStorage` on every load and stashes it in extension storage under `LS-<host>` (the upload step filters it by the selected domains). In overwrite ("down") mode it writes the previously-synced values from `LS-<host>` back into the page's `localStorage`. This is how local storage sync is achieved, since the background worker cannot read a page's `localStorage` directly.
+- **`utils/functions.ts`** — the core logic and **the only place encryption happens**. It collects cookies and local storage for the selected registrable domains, derives the UUID from the password (`derive_uuid`), encrypts with the fixed `aes-128-cbc-fixed` scheme, uploads (gzip-compressed, with a 24-hour SHA-256 de-duplication guard so unchanged data is not re-uploaded), and downloads (writing cookies via `browser.cookies.set` and storing local storage for the content script to apply). The fixed server endpoint (`ENDPOINT`) and algorithm (`CRYPTO_TYPE`) are module-level constants here. See [Encryption](#cookie-encryption-and-decryption-algorithm).
+- **`utils/domain.ts`** — computes the registrable domain (eTLD+1) of a host via `tldts`; used to group the popup's domain list and to match cookies / local storage at sync time so the two always agree.
 - **`utils/messaging.ts`** — a thin dispatcher that routes a config payload to `upload_cookie` or `download_cookie`.
 - **`public/_locales/`** — i18n messages for `en` and `zh_CN`.
 - **`wxt.config.ts`** — wxt/manifest config. Requested permissions: `cookies`, `tabs`, `storage`, `alarms`, `unlimitedStorage`, and `<all_urls>` host access.
@@ -87,6 +88,8 @@ pnpm zip:chrome        # package a distributable zip
 ## Server Side · Self-hosting
 
 > Hosting your own server keeps your data fully under your control.
+
+> The extension's server endpoint is hardcoded as the `ENDPOINT` constant in [`ext/utils/functions.ts`](ext/utils/functions.ts). To point a build at your own server, change that constant and rebuild the extension.
 
 ### Option One: Docker (simple, recommended)
 
@@ -162,9 +165,19 @@ Download:
 
 ## Cookie Encryption and Decryption Algorithm
 
-CookieCloud is end-to-end encrypted: the **UUID** and the **password** never leave your browser together, and the server only stores the ciphertext. Encryption and decryption both live in [`ext/utils/functions.ts`](ext/utils/functions.ts).
+CookieCloud is end-to-end encrypted: the server only ever stores ciphertext. The **password** is the single secret and never leaves your browser. Encryption and decryption both live in [`ext/utils/functions.ts`](ext/utils/functions.ts).
 
-### Key derivation (shared by both algorithms)
+### Identity — the UUID is derived from the password
+
+The storage UUID (the address the blob lives at, `data/<uuid>.json`) is derived from the password with a one-way hash, so you manage one secret and the same password points every browser at the same record:
+
+```
+uuid = MD5('cookiecloud-' + password).hex()   // see derive_uuid()
+```
+
+Because it is a one-way hash, the UUID can safely appear in URLs without revealing the password. The flip side: the password is now the *only* thing protecting your data, so use a strong one (the popup's "generate" button creates a 22-character random one).
+
+### Encryption key
 
 ```
 the_key = MD5(uuid + '-' + password).hex().substring(0, 16)   // a 16-character string
@@ -184,20 +197,7 @@ Before encryption, the payload is JSON:
 
 After decryption you `JSON.parse` it back into `{ cookie_data, local_storage_data }`.
 
-### Algorithm 1 — `legacy` (default, "CryptoJS / dynamic IV")
-
-`the_key` is passed to CryptoJS as a **passphrase**. CryptoJS generates a random 8-byte salt and derives the real key + IV with OpenSSL's `EVP_BytesToKey` (MD5), producing **AES-256-CBC** with PKCS7 padding. The output is the OpenSSL `"Salted__" + salt + ciphertext` envelope, Base64-encoded — so the IV is different (random) for every message.
-
-```js
-function cookie_decrypt(uuid, encrypted, password) {
-  const CryptoJS = require('crypto-js');
-  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
-  const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
-  return JSON.parse(decrypted);
-}
-```
-
-### Algorithm 2 — `aes-128-cbc-fixed` (standard, "fixed IV")
+### What the extension uses — `aes-128-cbc-fixed`
 
 `the_key` is used **directly as the 16 raw bytes** of an **AES-128** key, with a **fixed all-zero IV** and PKCS7 padding. The output is the Base64 of the raw ciphertext (no `Salted__` envelope). Because there is no custom KDF or salt header, this format is trivial to decrypt with the standard crypto library of any language.
 
@@ -208,7 +208,7 @@ function cookie_decrypt(uuid, encrypted, password) {
 - Encoding: Base64
 
 ```js
-function cookie_decrypt_fixed(uuid, encrypted, password) {
+function cookie_decrypt(uuid, encrypted, password) {
   const CryptoJS = require('crypto-js');
   const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
   const options = {
@@ -219,6 +219,19 @@ function cookie_decrypt_fixed(uuid, encrypted, password) {
   const decrypted = CryptoJS.AES
     .decrypt(encrypted, CryptoJS.enc.Utf8.parse(the_key), options)
     .toString(CryptoJS.enc.Utf8);
+  return JSON.parse(decrypted);
+}
+```
+
+### Legacy format — `legacy` (CryptoJS / dynamic IV)
+
+The extension no longer produces this format, but the server and the reference decryptors still read it so previously-stored blobs stay decryptable. Here `the_key` is passed to CryptoJS as a **passphrase**: CryptoJS generates a random 8-byte salt and derives the real key + IV with OpenSSL's `EVP_BytesToKey` (MD5), producing **AES-256-CBC** with PKCS7 padding. The output is the OpenSSL `"Salted__" + salt + ciphertext` envelope, Base64-encoded — so the IV is random for every message.
+
+```js
+function cookie_decrypt_legacy(uuid, encrypted, password) {
+  const CryptoJS = require('crypto-js');
+  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
+  const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
   return JSON.parse(decrypted);
 }
 ```

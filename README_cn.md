@@ -4,9 +4,9 @@
 
 ![](ext/public/icon/icon.png)
 
-CookieCloud 是一个和自架服务器同步 Cookie 的小工具，可以将浏览器的 Cookie 及 Local Storage 同步到手机和云端，内置端对端加密，可设定同步时间间隔。
+CookieCloud 是一个和自架服务器同步 Cookie 的小工具，可以将浏览器的 Cookie 及 Local Storage 同步到手机和云端，内置端对端加密，并定时自动同步。
 
-当前版本使用 **[wxt](https://wxt.dev)** 重写（Manifest V3，React + TypeScript），支持同域名下 Local Storage 的同步，并提供两种加密算法：原有的 CryptoJS 算法（动态 IV）和标准的 **AES-128-CBC** 算法（固定 IV，便于任意语言的主流加密库解密）。
+当前版本使用 **[wxt](https://wxt.dev)** 重写（Manifest V3，React + TypeScript），始终同步 Cookie 与 Local Storage，并使用标准的 **AES-128-CBC**（固定 IV）方案加密，便于任意语言的主流加密库解密。扩展只需一个秘密：你只填写端对端**密码**，存储用的 **UUID** 由它自动派生。服务器地址固定在构建里（[`ext/utils/functions.ts`](ext/utils/functions.ts) 中的 `ENDPOINT` 常量）。服务器与各参考解密实现仍然认识旧的 `legacy` CryptoJS 格式，以便解密此前已存储的数据。
 
 [Telegram 频道](https://t.me/CookieCloudTG) | [Telegram 交流群](https://t.me/CookieCloudGroup)
 
@@ -29,10 +29,11 @@ CookieCloud 是一个和自架服务器同步 Cookie 的小工具，可以将浏
 
 扩展是唯一会接触你 Cookie 的组件，使用 [wxt](https://wxt.dev) 构建，以 Manifest V3 发布。
 
-- **`entrypoints/popup/App.tsx`** — React 配置界面。可设置工作模式（上传 / 覆盖 / 暂停）、服务器地址、UUID、端对端密码、加密算法、Cookie 过期时间、同步间隔、是否包含 Local Storage、附加请求 Header、同步域名关键词、域名黑名单以及 Keep Alive 的 URL。配置以 `COOKIE_SYNC_SETTING` 为键保存在本地。
-- **`entrypoints/background.ts`** — 后台 Service Worker。注册一个 1 分钟的 alarm，每次触发时读取配置，当经过的分钟数能被同步间隔整除时执行上传或下载（暂停模式则跳过）。同时实现 **Cookie Keep Alive**：定期在后台标签页打开指定 URL 以保持会话活跃。
-- **`entrypoints/content.ts`** — 注入到所有页面的内容脚本。上传模式下读取页面的 `localStorage` 并暂存到扩展存储的 `LS-<host>`；覆盖（down）模式下把此前同步的 `LS-<host>` 写回页面的 `localStorage`。由于后台 Worker 无法直接读取页面 `localStorage`，Local Storage 的同步正是通过它实现的。
-- **`utils/functions.ts`** — 核心逻辑，**也是唯一进行加密的地方**。按域名 / 黑名单采集 Cookie，收集 Local Storage，执行 `cookie_encrypt` / `cookie_decrypt`，上传（gzip 压缩，并带 24 小时 SHA-256 去重，内容未变则不重复上传），以及下载（通过 `browser.cookies.set` 写入 Cookie，并存下 Local Storage 供内容脚本应用）。详见[加解密算法](#cookie-加解密算法)。
+- **`entrypoints/popup/App.tsx`** — React 配置界面。第一行用一个三态分段控件选择工作模式（上传 / 覆盖 / 暂停）。你唯一需要输入的秘密是端对端**密码**——存储用的 UUID 由它自动派生（`derive_uuid`），不展示也不可编辑。上传模式下，它列出浏览器当前有 Cookie 的所有域名（按可注册域名分组），每个域名一行，带一个**同步**复选框和一个**保活**复选框（默认都不勾选），并提供过滤框与全选/清空。配置以 `COOKIE_SYNC_SETTING` 为键保存在本地。
+- **`entrypoints/background.ts`** — 后台 Service Worker。注册一个 1 分钟的 alarm，每次触发时读取配置，当经过的分钟数能被同步间隔（默认 10）整除时执行上传或下载（暂停模式则跳过）。同时实现 **Cookie Keep Alive**：对每个勾选了保活的域名，每小时在后台标签页访问一次 `https://<域名>/` 以保持会话活跃。
+- **`entrypoints/content.ts`** — 注入到所有页面的内容脚本。上传模式下在每个页面读取其 `localStorage` 并暂存到扩展存储的 `LS-<host>`（上传环节再按所选域名过滤）；覆盖（down）模式下把此前同步的 `LS-<host>` 写回页面的 `localStorage`。由于后台 Worker 无法直接读取页面 `localStorage`，Local Storage 的同步正是通过它实现的。
+- **`utils/functions.ts`** — 核心逻辑，**也是唯一进行加密的地方**。按所选的可注册域名采集 Cookie 与 Local Storage，从密码派生 UUID（`derive_uuid`），用固定的 `aes-128-cbc-fixed` 方案加密，上传（gzip 压缩，并带 24 小时 SHA-256 去重，内容未变则不重复上传），以及下载（通过 `browser.cookies.set` 写入 Cookie，并存下 Local Storage 供内容脚本应用）。固定的服务器地址（`ENDPOINT`）与算法（`CRYPTO_TYPE`）就是这里的模块级常量。详见[加解密算法](#cookie-加解密算法)。
+- **`utils/domain.ts`** — 通过 `tldts` 计算主机的可注册域名（eTLD+1）；用于给弹窗的域名列表分组，并在同步时匹配 Cookie / Local Storage，确保二者一致。
 - **`utils/messaging.ts`** — 轻量分发器，将配置载荷路由到 `upload_cookie` 或 `download_cookie`。
 - **`public/_locales/`** — `en` 与 `zh_CN` 的 i18n 文案。
 - **`wxt.config.ts`** — wxt/manifest 配置。申请的权限：`cookies`、`tabs`、`storage`、`alarms`、`unlimitedStorage` 以及 `<all_urls>` 主机访问。
@@ -87,6 +88,8 @@ pnpm zip:chrome        # 打包成可分发的 zip
 ## 服务器端 · 自行架设
 
 > 自行架设服务器可以让数据完全掌握在自己手中。
+
+> 扩展的服务器地址被硬编码为 [`ext/utils/functions.ts`](ext/utils/functions.ts) 中的 `ENDPOINT` 常量。若要让某个构建指向你自己的服务器，请修改该常量并重新构建扩展。
 
 ### 方案一：Docker（简单、推荐）
 
@@ -162,9 +165,19 @@ cd api && yarn install && node app.js
 
 ## Cookie 加解密算法
 
-CookieCloud 是端对端加密的：**UUID** 与 **密码** 不会一起离开你的浏览器，服务器只存储密文。加密与解密都位于 [`ext/utils/functions.ts`](ext/utils/functions.ts)。
+CookieCloud 是端对端加密的：服务器只存储密文。**密码**是唯一的秘密，绝不离开你的浏览器。加密与解密都位于 [`ext/utils/functions.ts`](ext/utils/functions.ts)。
 
-### 密钥推导（两种算法共用）
+### 身份 — UUID 由密码派生
+
+存储 UUID（密文所在的地址 `data/<uuid>.json`）通过单向哈希从密码派生，因此你只需管理一个秘密，且相同的密码会让每个浏览器都指向同一条记录：
+
+```
+uuid = MD5('cookiecloud-' + password).hex()   // 见 derive_uuid()
+```
+
+因为是单向哈希，UUID 可以安全地出现在 URL 中而不泄露密码。代价是：密码成了保护数据的**唯一**屏障，所以请使用强密码（弹窗的"生成"按钮会创建一个 22 位的随机串）。
+
+### 加密密钥
 
 ```
 the_key = MD5(uuid + '-' + password).hex().substring(0, 16)   // 16 个字符的字符串
@@ -184,20 +197,7 @@ the_key = MD5(uuid + '-' + password).hex().substring(0, 16)   // 16 个字符的
 
 解密后再 `JSON.parse` 得到 `{ cookie_data, local_storage_data }`。
 
-### 算法一 — `legacy`（默认，「CryptoJS / 动态 IV」）
-
-`the_key` 作为**口令（passphrase）**传给 CryptoJS。CryptoJS 生成随机的 8 字节 salt，并用 OpenSSL 的 `EVP_BytesToKey`（MD5）派生出真正的 key + IV，得到 **AES-256-CBC**、PKCS7 填充。输出为 OpenSSL 的 `"Salted__" + salt + 密文` 信封并经 Base64 编码——因此每条消息的 IV 都是随机且不同的。
-
-```js
-function cookie_decrypt(uuid, encrypted, password) {
-  const CryptoJS = require('crypto-js');
-  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
-  const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
-  return JSON.parse(decrypted);
-}
-```
-
-### 算法二 — `aes-128-cbc-fixed`（标准，「固定 IV」）
+### 扩展实际使用的算法 — `aes-128-cbc-fixed`
 
 `the_key` 被**直接作为 AES-128 的 16 字节原始密钥**使用，配合**固定的全零 IV**和 PKCS7 填充。输出为原始密文的 Base64（无 `Salted__` 信封）。由于没有自定义 KDF 或 salt 头，这种格式可以用任意语言的标准加密库轻松解密。
 
@@ -208,7 +208,7 @@ function cookie_decrypt(uuid, encrypted, password) {
 - 编码：Base64
 
 ```js
-function cookie_decrypt_fixed(uuid, encrypted, password) {
+function cookie_decrypt(uuid, encrypted, password) {
   const CryptoJS = require('crypto-js');
   const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
   const options = {
@@ -219,6 +219,19 @@ function cookie_decrypt_fixed(uuid, encrypted, password) {
   const decrypted = CryptoJS.AES
     .decrypt(encrypted, CryptoJS.enc.Utf8.parse(the_key), options)
     .toString(CryptoJS.enc.Utf8);
+  return JSON.parse(decrypted);
+}
+```
+
+### 旧格式 — `legacy`（CryptoJS / 动态 IV）
+
+扩展已不再产出这种格式，但服务器与各参考解密实现仍然支持它，以便解密此前已存储的密文。此时 `the_key` 作为**口令（passphrase）**传给 CryptoJS：CryptoJS 生成随机的 8 字节 salt，并用 OpenSSL 的 `EVP_BytesToKey`（MD5）派生出真正的 key + IV，得到 **AES-256-CBC**、PKCS7 填充。输出为 OpenSSL 的 `"Salted__" + salt + 密文` 信封并经 Base64 编码——因此每条消息的 IV 都是随机的。
+
+```js
+function cookie_decrypt_legacy(uuid, encrypted, password) {
+  const CryptoJS = require('crypto-js');
+  const the_key = CryptoJS.MD5(uuid + '-' + password).toString().substring(0, 16);
+  const decrypted = CryptoJS.AES.decrypt(encrypted, the_key).toString(CryptoJS.enc.Utf8);
   return JSON.parse(decrypted);
 }
 ```
