@@ -54,6 +54,9 @@
     "domainFilterPlaceholder": {
         "message": "过滤域名"
     },
+    "showSelectedOnly": {
+        "message": "仅显示已同步"
+    },
     "columnSync": {
         "message": "同步"
     },

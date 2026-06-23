@@ -36,6 +36,7 @@ const CookieCloudPopup: React.FC = () => {
   });
   const [allDomains, setAllDomains] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
+  const [showSelectedOnly, setShowSelectedOnly] = useState(false);
 
   // Load saved config; the uuid is always (re)derived from the password.
   useEffect(() => {
@@ -91,7 +92,16 @@ const CookieCloudPopup: React.FC = () => {
     });
   };
 
-  const visibleDomains = allDomains.filter(d => d.includes(filter.trim()));
+  // Always include domains the user has already selected, even if the browser
+  // has no current cookies for them, so they can still be seen and unchecked.
+  const knownDomains = Array.from(
+    new Set([...allDomains, ...data.selected_domains, ...data.keep_alive_domains])
+  ).sort();
+  const visibleDomains = knownDomains.filter(d => {
+    if (!d.includes(filter.trim())) return false;
+    if (showSelectedOnly && !data.selected_domains.includes(d)) return false;
+    return true;
+  });
 
   const setSyncForVisible = (checked: boolean) => {
     setData(prev => {
@@ -147,7 +157,7 @@ const CookieCloudPopup: React.FC = () => {
   ];
 
   return (
-    <div className="w-96 overflow-x-hidden bg-white rounded-lg shadow-lg flex flex-col h-[780px] relative">
+    <div className="w-96 overflow-x-hidden bg-white rounded-lg shadow-lg flex flex-col h-[600px] relative">
       <div className="flex-1 overflow-y-auto p-5 pb-20">
         <div className="space-y-4">
           {/* Mode — 3-state segmented control on the first row */}
@@ -202,6 +212,11 @@ const CookieCloudPopup: React.FC = () => {
                   <label className="block text-sm font-medium text-gray-600 mb-2">{msg('syncDomains', '同步域名')}</label>
                   <input type="text" className="form-input mb-2" placeholder={msg('domainFilterPlaceholder', '过滤域名')} value={filter}
                     onChange={(e) => setFilter(e.target.value)} />
+                  <label className="flex items-center text-xs text-gray-500 mb-2 cursor-pointer">
+                    <input type="checkbox" className="mr-1" checked={showSelectedOnly}
+                      onChange={(e) => setShowSelectedOnly(e.target.checked)} />
+                    {msg('showSelectedOnly', '仅显示已同步')}
+                  </label>
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-1 px-1">
                     <div className="flex gap-2">
                       <span className="w-8 text-center">{msg('columnSync', '同步')}</span>

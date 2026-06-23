@@ -54,6 +54,9 @@
     "domainFilterPlaceholder": {
         "message": "Filter domains"
     },
+    "showSelectedOnly": {
+        "message": "Show synced only"
+    },
     "columnSync": {
         "message": "Sync"
     },
