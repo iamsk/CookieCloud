@@ -39,17 +39,8 @@
     "overwriteModeDesp": {
         "message": "Overwrite mode is mainly used for cloud and read-only browsers. Overwriting Cookies and Local Storage may cause current browser login and modification operations to fail; moreover, some websites do not allow the same cookie to be logged in on multiple browsers at the same time, which may cause account logouts on other browsers."
     },
-    "serverHost": {
-        "message": "Server Address"
-    },
-    "serverHostPlaceholder": {
-        "message": "Please enter server address"
-    },
     "uuid": {
         "message": "User KEY · UUID"
-    },
-    "uuidPlaceholder": {
-        "message": "Unique User ID"
     },
     "reGenerate": {
         "message": "Regenerate"
@@ -75,38 +66,29 @@
     "syncTimeIntervalPlaceholder": {
         "message": "At least 10 minutes"
     },
-    "syncLocalStorageOrNot": {
-        "message": "Sync Local Storage?"
+    "syncDomains": {
+        "message": "Sync Domains"
     },
-    "yes": {
-        "message": "Yes"
+    "domainFilterPlaceholder": {
+        "message": "Filter domains"
     },
-    "no": {
-        "message": "No"
+    "columnSync": {
+        "message": "Sync"
     },
-    "requestHeader": {
-        "message": "Request Header · Optional"
+    "columnKeepAlive": {
+        "message": "Alive"
     },
-    "requestHeaderPlaceholder": {
-        "message": "Append Header to request for server authentication etc., one per line, format as 'Key:Value', no spaces allowed"
+    "selectAll": {
+        "message": "Select All"
     },
-    "syncDomainKeyword": {
-        "message": "Sync Domain Keyword · Optional"
+    "clearAll": {
+        "message": "Clear"
     },
-    "syncDomainKeywordPlaceholder": {
-        "message": "One per line, sync all domains containing the keyword, e.g., qq.com, jd.com will include all subdomains, leave blank to sync all by default"
+    "noCookiesFound": {
+        "message": "No cookie domains found"
     },
-    "syncDomainBlacklist": {
-        "message": "Sync Domain Blacklist · Optional"
-    },
-    "syncDomainBlacklistPlaceholder": {
-        "message": "The blacklist only takes effect when the sync domain keyword is empty. One domain per line, matching domains will not be synced"
-    },
-    "cookieKeepLive": {
-        "message": "Cookie Keep Alive · Optional"
-    },
-    "cookieKeepLivePlaceholder": {
-        "message": "Periodically refresh URL in the background to simulate user activity. One URL per line, default 60 minutes, can specify refresh time with URL|minutes format"
+    "keepAliveHint": {
+        "message": "Keep Alive: visits the domain in the background once per hour to keep the session logged in"
     },
     "keepLiveStop": {
         "message": "Pause Sync and Keep Alive"
@@ -122,20 +104,5 @@
     },
     "copyFailed": {
         "message": "Copy failed, please copy manually"
-    },
-    "cryptoAlgorithm": {
-        "message": "Encryption Algorithm"
-    },
-    "cryptoLegacy": {
-        "message": "CryptoJS (Dynamic IV)"
-    },
-    "cryptoAesCbcFixed": {
-        "message": "AES-128-CBC (Fixed IV)"
-    },
-    "cryptoLegacyDesc": {
-        "message": "Uses CryptoJS encryption algorithm with dynamic IV generation"
-    },
-    "cryptoAesCbcFixedDesc": {
-        "message": "Uses standard AES-128-CBC algorithm with fixed IV (0x0)"
     }
 }
