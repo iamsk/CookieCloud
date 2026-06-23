@@ -5,6 +5,13 @@ import { registrable_domain } from './domain';
 const ENDPOINT = 'https://cookie.readtheone.com';
 const CRYPTO_TYPE = 'aes-128-cbc-fixed';
 
+// The UUID (storage address) is deterministically derived from the password, so
+// the user only manages one secret and the same password points every browser at
+// the same record. It is a one-way hash, so it never leaks the password.
+export function derive_uuid(password: string): string {
+  return CryptoJS.MD5('cookiecloud-' + password).toString();
+}
+
 interface CookieData {
   [domain: string]: any[];
 }

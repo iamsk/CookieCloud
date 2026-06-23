@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { load_data, save_data } from '../../utils/functions';
+import { load_data, save_data, derive_uuid } from '../../utils/functions';
 import { handleConfigMessage } from '../../utils/messaging';
 import { group_domains } from '../../utils/domain';
 import short_uid from 'short-uuid';
@@ -28,7 +28,7 @@ const CookieCloudPopup: React.FC = () => {
   const [data, setData] = useState<ConfigData>({
     password: "",
     interval: 10,
-    uuid: String(short_uid.generate()),
+    uuid: "",
     type: "up",
     expire_minutes: 60 * 24 * 365,
     selected_domains: [],
@@ -37,17 +37,18 @@ const CookieCloudPopup: React.FC = () => {
   const [allDomains, setAllDomains] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
 
-  // Load saved config, dropping removed keys.
+  // Load saved config; the uuid is always (re)derived from the password.
   useEffect(() => {
     (async () => {
       try {
         const saved = await load_data("COOKIE_SYNC_SETTING");
         if (saved) {
+          const password = saved.password ?? "";
           setData(prev => ({
             ...prev,
-            password: saved.password ?? prev.password,
+            password,
             interval: Number(saved.interval ?? prev.interval),
-            uuid: saved.uuid ?? prev.uuid,
+            uuid: password ? derive_uuid(password) : (saved.uuid ?? prev.uuid),
             type: saved.type ?? prev.type,
             expire_minutes: Number(saved.expire_minutes ?? prev.expire_minutes),
             selected_domains: Array.isArray(saved.selected_domains) ? saved.selected_domains : [],
@@ -77,6 +78,11 @@ const CookieCloudPopup: React.FC = () => {
     setData(prev => ({ ...prev, [field]: value }));
   };
 
+  // Password is the only secret; the uuid is derived from it automatically.
+  const setPassword = (password: string) => {
+    setData(prev => ({ ...prev, password, uuid: derive_uuid(password) }));
+  };
+
   const toggleInArray = (field: 'selected_domains' | 'keep_alive_domains', domain: string) => {
     setData(prev => {
       const set = new Set(prev[field]);
@@ -96,7 +102,7 @@ const CookieCloudPopup: React.FC = () => {
   };
 
   const test = async (action: string = msg('test', '测试')) => {
-    if (!data.password || !data.uuid || !data.type) {
+    if (!data.password) {
       alert(msg("fullMessagePlease", "请填写完整的信息"));
       return;
     }
@@ -118,7 +124,7 @@ const CookieCloudPopup: React.FC = () => {
   };
 
   const save = async () => {
-    if (!data.password || !data.uuid || !data.type) {
+    if (!data.password) {
       alert(msg("fullMessagePlease", "请填写完整的信息"));
       return;
     }
@@ -131,9 +137,8 @@ const CookieCloudPopup: React.FC = () => {
     }
   };
 
-  const uuidRegen = () => handleInputChange('uuid', String(short_uid.generate()));
-  const passwordGen = () => handleInputChange('password', String(short_uid.generate()));
-  const onCopySuccess = (type: 'UUID' | 'Password') => alert(`${type} ${msg('copySuccess', '已复制到剪贴板')}`);
+  const passwordGen = () => setPassword(String(short_uid.generate()));
+  const onCopySuccess = () => alert(`Password ${msg('copySuccess', '已复制到剪贴板')}`);
 
   const modes: [string, string][] = [
     ['up', msg('upToServer', '上传到服务器')],
@@ -144,53 +149,35 @@ const CookieCloudPopup: React.FC = () => {
   return (
     <div className="w-96 overflow-x-hidden bg-white rounded-lg shadow-lg flex flex-col h-[600px] relative">
       <div className="flex-1 overflow-y-auto p-5 pb-20">
-        <div className="text-center mb-5 pb-4 border-b border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-800">CookieCloud</h2>
-        </div>
-
         <div className="space-y-4">
-          {/* Working Mode */}
-          <div>
-            <label className="block text-sm font-medium text-gray-600 mb-2">{msg('workingMode', '工作模式')}</label>
-            <div className="flex flex-wrap gap-4">
-              {modes.map(([val, label]) => (
-                <label key={val} className="flex items-center">
-                  <input type="radio" name="type" value={val} checked={data.type === val}
-                    onChange={(e) => handleInputChange('type', e.target.value)} className="mr-2" />
-                  {label}
-                </label>
-              ))}
-            </div>
-            {data.type === 'down' && (
-              <div className="bg-red-600 text-white p-3 mt-2 rounded">{msg('overwriteModeDesp', '覆盖模式主要用于云端和只读用的浏览器，Cookie和Local Storage覆盖可能导致当前浏览器的登录和修改操作失效；另外部分网站不允许同一个cookie在多个浏览器同时登录，可能导致其他浏览器上账号退出。')}</div>
-            )}
+          {/* Mode — 3-state segmented control on the first row */}
+          <div className="flex rounded-lg bg-gray-100 p-1">
+            {modes.map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => handleInputChange('type', val)}
+                className={`flex-1 text-xs leading-tight py-2 px-1 rounded-md transition ${data.type === val ? 'bg-white shadow text-gray-800 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
+
+          {data.type === 'down' && (
+            <div className="bg-red-600 text-white p-3 rounded">{msg('overwriteModeDesp', '覆盖模式主要用于云端和只读用的浏览器，Cookie和Local Storage覆盖可能导致当前浏览器的登录和修改操作失效；另外部分网站不允许同一个cookie在多个浏览器同时登录，可能导致其他浏览器上账号退出。')}</div>
+          )}
 
           {data.type !== 'pause' && (
             <>
-              {/* UUID */}
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('uuid', 'User KEY · UUID')}</label>
-                <div className="flex">
-                  <div className="relative flex-1">
-                    <input type="text" className="form-input pl-10 pr-3" value={data.uuid}
-                      onChange={(e) => handleInputChange('uuid', e.target.value)} />
-                    <CopyToClipboard text={data.uuid} onCopy={() => onCopySuccess('UUID')}>
-                      <button className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600" title="复制 UUID"><CopyIcon /></button>
-                    </CopyToClipboard>
-                  </div>
-                  <button className="ml-2 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600" onClick={uuidRegen}>{msg('reGenerate', '重新生成')}</button>
-                </div>
-              </div>
-
-              {/* Password */}
+              {/* Password — the only secret; uuid is derived from it */}
               <div>
                 <label className="block text-sm font-medium text-gray-600 mb-1">{msg('syncPassword', '端对端加密密码')}</label>
                 <div className="flex">
                   <div className="relative flex-1">
                     <input type="password" className="form-input pl-10 pr-3" placeholder={msg('syncPasswordPlaceholder', '丢失后数据失效，请妥善保管')} value={data.password}
-                      onChange={(e) => handleInputChange('password', e.target.value)} />
-                    <CopyToClipboard text={data.password} onCopy={() => onCopySuccess('Password')}>
+                      onChange={(e) => setPassword(e.target.value)} />
+                    <CopyToClipboard text={data.password} onCopy={onCopySuccess}>
                       <button className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600" title="复制密码"><CopyIcon /></button>
                     </CopyToClipboard>
                   </div>
