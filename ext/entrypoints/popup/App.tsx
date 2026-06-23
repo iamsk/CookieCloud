@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { load_data, save_data } from '../../utils/functions';
 import { handleConfigMessage } from '../../utils/messaging';
+import { group_domains } from '../../utils/domain';
 import short_uid from 'short-uuid';
 import browser from 'webextension-polyfill';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
 
-// 复制图标 SVG 组件
 const CopyIcon: React.FC<{ className?: string }> = ({ className = "w-4 h-4" }) => (
   <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
@@ -13,134 +13,133 @@ const CopyIcon: React.FC<{ className?: string }> = ({ className = "w-4 h-4" }) =
 );
 
 interface ConfigData {
-  endpoint: string;
   password: string;
   interval: number;
-  domains: string;
   uuid: string;
   type: string;
-  keep_live: string;
-  with_storage: number;
-  blacklist: string;
-  headers: string;
   expire_minutes: number;
-  crypto_type: string;
+  selected_domains: string[];
+  keep_alive_domains: string[];
 }
+
+const msg = (key: string, fallback: string) => browser.i18n.getMessage(key) || fallback;
 
 const CookieCloudPopup: React.FC = () => {
   const [data, setData] = useState<ConfigData>({
-    endpoint: "https://ccc.ft07.com",
     password: "",
     interval: 10,
-    domains: "",
     uuid: String(short_uid.generate()),
     type: "up",
-    keep_live: "",
-    with_storage: 1,
-    blacklist: "google.com",
-    headers: "",
     expire_minutes: 60 * 24 * 365,
-    crypto_type: "legacy"
+    selected_domains: [],
+    keep_alive_domains: [],
   });
+  const [allDomains, setAllDomains] = useState<string[]>([]);
+  const [filter, setFilter] = useState("");
 
+  // Load saved config, dropping removed keys.
   useEffect(() => {
-    const loadData = async () => {
+    (async () => {
       try {
-        const savedData = await load_data("COOKIE_SYNC_SETTING");
-        if (savedData) {
-          // 旧版本 popup 把 radio/number 输入存成字符串；这里归一化成数字，
-          // 否则 with_storage === 1 之类的严格比较会让控件显示成未选中。
-          if (savedData.with_storage !== undefined) {
-            savedData.with_storage = Number(savedData.with_storage);
-          }
-          if (savedData.interval !== undefined) {
-            savedData.interval = Number(savedData.interval);
-          }
-          if (savedData.expire_minutes !== undefined) {
-            savedData.expire_minutes = Number(savedData.expire_minutes);
-          }
-          setData(prevData => ({ ...prevData, ...savedData }));
+        const saved = await load_data("COOKIE_SYNC_SETTING");
+        if (saved) {
+          setData(prev => ({
+            ...prev,
+            password: saved.password ?? prev.password,
+            interval: Number(saved.interval ?? prev.interval),
+            uuid: saved.uuid ?? prev.uuid,
+            type: saved.type ?? prev.type,
+            expire_minutes: Number(saved.expire_minutes ?? prev.expire_minutes),
+            selected_domains: Array.isArray(saved.selected_domains) ? saved.selected_domains : [],
+            keep_alive_domains: Array.isArray(saved.keep_alive_domains) ? saved.keep_alive_domains : [],
+          }));
         }
       } catch (error) {
         console.error('Failed to load data:', error);
       }
-    };
-    loadData();
+    })();
   }, []);
 
+  // Enumerate the browser's cookie domains (upload mode only).
+  useEffect(() => {
+    if (data.type !== 'up') return;
+    (async () => {
+      try {
+        const cookies = await browser.cookies.getAll({});
+        setAllDomains(group_domains(cookies.map(c => c.domain || '').filter(Boolean)));
+      } catch (error) {
+        console.error('Failed to load domains:', error);
+      }
+    })();
+  }, [data.type]);
+
   const handleInputChange = (field: keyof ConfigData, value: string | number) => {
-    setData(prevData => ({
-      ...prevData,
-      [field]: value
-    }));
+    setData(prev => ({ ...prev, [field]: value }));
   };
 
-  const test = async (action: string = browser.i18n.getMessage('test') || '测试') => {
-    console.log("request,begin");
-    
-    if (!data.endpoint || !data.password || !data.uuid || !data.type) {
-      alert(browser.i18n.getMessage("fullMessagePlease") || "请填写完整的信息");
+  const toggleInArray = (field: 'selected_domains' | 'keep_alive_domains', domain: string) => {
+    setData(prev => {
+      const set = new Set(prev[field]);
+      if (set.has(domain)) set.delete(domain); else set.add(domain);
+      return { ...prev, [field]: Array.from(set) };
+    });
+  };
+
+  const visibleDomains = allDomains.filter(d => d.includes(filter.trim()));
+
+  const setSyncForVisible = (checked: boolean) => {
+    setData(prev => {
+      const set = new Set(prev.selected_domains);
+      visibleDomains.forEach(d => { if (checked) set.add(d); else set.delete(d); });
+      return { ...prev, selected_domains: Array.from(set) };
+    });
+  };
+
+  const test = async (action: string = msg('test', '测试')) => {
+    if (!data.password || !data.uuid || !data.type) {
+      alert(msg("fullMessagePlease", "请填写完整的信息"));
       return;
     }
-    
     if (data.type === 'pause') {
-      alert(browser.i18n.getMessage("actionNotAllowedInPause") || "暂停状态下无法进行此操作");
+      alert(msg("actionNotAllowedInPause", "暂停状态下无法进行此操作"));
       return;
     }
-    
     try {
       const ret = await handleConfigMessage({ ...data, no_cache: 1 });
-      console.log(action + " returned", ret);
-      
       if (ret && ret.message === 'done') {
-        if (ret.note) {
-          alert(ret.note);
-        } else {
-          alert(action + (browser.i18n.getMessage('success') || '成功'));
-        }
+        alert(ret.note ? ret.note : action + msg('success', '成功'));
       } else {
-        alert(action + (browser.i18n.getMessage('failedCheckInfo') || '失败，请检查填写的信息是否正确'));
+        alert(action + msg('failedCheckInfo', '失败，请检查填写的信息是否正确'));
       }
     } catch (error) {
       console.error('Test failed:', error);
-      alert(action + (browser.i18n.getMessage('failedCheckInfo') || '失败，请检查填写的信息是否正确'));
+      alert(action + msg('failedCheckInfo', '失败，请检查填写的信息是否正确'));
     }
   };
 
   const save = async () => {
-    if (!data.endpoint || !data.password || !data.uuid || !data.type) {
-      alert(browser.i18n.getMessage("fullMessagePlease") || "请填写完整的信息");
+    if (!data.password || !data.uuid || !data.type) {
+      alert(msg("fullMessagePlease", "请填写完整的信息"));
       return;
     }
-    
     try {
       await save_data("COOKIE_SYNC_SETTING", data);
-      const ret = await load_data("COOKIE_SYNC_SETTING");
-      console.log("Read after save", ret);
-      alert(browser.i18n.getMessage("saveSucess") || "保存成功");
+      alert(msg("saveSucess", "保存成功"));
     } catch (error) {
       console.error('Save failed:', error);
       alert('Save failed');
     }
   };
 
-  const uuidRegen = () => {
-    handleInputChange('uuid', String(short_uid.generate()));
-  };
+  const uuidRegen = () => handleInputChange('uuid', String(short_uid.generate()));
+  const passwordGen = () => handleInputChange('password', String(short_uid.generate()));
+  const onCopySuccess = (type: 'UUID' | 'Password') => alert(`${type} ${msg('copySuccess', '已复制到剪贴板')}`);
 
-  const passwordGen = () => {
-    handleInputChange('password', String(short_uid.generate()));
-  };
-
-  // 复制成功回调
-  const onCopySuccess = (type: 'UUID' | 'Password') => {
-    alert(`${type} ${browser.i18n.getMessage('copySuccess') || '已复制到剪贴板'}`);
-  };
-
-  // 复制失败回调
-  const onCopyError = () => {
-    alert(browser.i18n.getMessage('copyFailed') || '复制失败，请手动复制');
-  };
+  const modes: [string, string][] = [
+    ['up', msg('upToServer', '上传到服务器')],
+    ['down', msg('overwriteToBrowser', '覆盖到浏览器')],
+    ['pause', msg('pauseSync', '暂停同步')],
+  ];
 
   return (
     <div className="w-96 overflow-x-hidden bg-white rounded-lg shadow-lg flex flex-col h-[600px] relative">
@@ -148,317 +147,124 @@ const CookieCloudPopup: React.FC = () => {
         <div className="text-center mb-5 pb-4 border-b border-gray-200">
           <h2 className="text-xl font-semibold text-gray-800">CookieCloud</h2>
         </div>
-        
+
         <div className="space-y-4">
           {/* Working Mode */}
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-2">
-              {browser.i18n.getMessage('workingMode') || '工作模式'}
-            </label>
+            <label className="block text-sm font-medium text-gray-600 mb-2">{msg('workingMode', '工作模式')}</label>
             <div className="flex flex-wrap gap-4">
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="type"
-                  value="up"
-                  checked={data.type === 'up'}
-                  onChange={(e) => handleInputChange('type', e.target.value)}
-                  className="mr-2"
-                />
-                {browser.i18n.getMessage('upToServer') || '上传到服务器'}
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="type"
-                  value="down"
-                  checked={data.type === 'down'}
-                  onChange={(e) => handleInputChange('type', e.target.value)}
-                  className="mr-2"
-                />
-                {browser.i18n.getMessage('overwriteToBrowser') || '覆盖到浏览器'}
-              </label>
-              <label className="flex items-center">
-                <input
-                  type="radio"
-                  name="type"
-                  value="pause"
-                  checked={data.type === 'pause'}
-                  onChange={(e) => handleInputChange('type', e.target.value)}
-                  className="mr-2"
-                />
-                {browser.i18n.getMessage('pauseSync') || '暂停同步'}
-              </label>
+              {modes.map(([val, label]) => (
+                <label key={val} className="flex items-center">
+                  <input type="radio" name="type" value={val} checked={data.type === val}
+                    onChange={(e) => handleInputChange('type', e.target.value)} className="mr-2" />
+                  {label}
+                </label>
+              ))}
             </div>
-            
             {data.type === 'down' && (
-              <div className="bg-red-600 text-white p-3 mt-2 rounded">
-                {browser.i18n.getMessage('overwriteModeDesp') || '覆盖模式主要用于云端和只读用的浏览器，Cookie和Local Storage覆盖可能导致当前浏览器的登录和修改操作失效；另外部分网站不允许同一个cookie在多个浏览器同时登录，可能导致其他浏览器上账号退出。'}
-              </div>
+              <div className="bg-red-600 text-white p-3 mt-2 rounded">{msg('overwriteModeDesp', '覆盖模式主要用于云端和只读用的浏览器，Cookie和Local Storage覆盖可能导致当前浏览器的登录和修改操作失效；另外部分网站不允许同一个cookie在多个浏览器同时登录，可能导致其他浏览器上账号退出。')}</div>
             )}
           </div>
 
           {data.type !== 'pause' && (
             <>
-              {/* Server Address */}
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">
-                  {browser.i18n.getMessage('serverHost') || '服务器地址'}
-                </label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder={browser.i18n.getMessage('serverHostPlaceholder') || '请输入服务器地址'}
-                  value={data.endpoint}
-                  onChange={(e) => handleInputChange('endpoint', e.target.value)}
-                />
-              </div>
-
               {/* UUID */}
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">
-                  {browser.i18n.getMessage('uuid') || 'User KEY · UUID'}
-                </label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('uuid', 'User KEY · UUID')}</label>
                 <div className="flex">
                   <div className="relative flex-1">
-                    <input
-                      type="text"
-                      className="form-input pl-10 pr-3"
-                      value={data.uuid}
-                      onChange={(e) => handleInputChange('uuid', e.target.value)}
-                    />
-                    <CopyToClipboard 
-                      text={data.uuid}
-                      onCopy={() => onCopySuccess('UUID')}
-                    >
-                      <button
-                        className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                        title="复制 UUID"
-                      >
-                        <CopyIcon />
-                      </button>
+                    <input type="text" className="form-input pl-10 pr-3" value={data.uuid}
+                      onChange={(e) => handleInputChange('uuid', e.target.value)} />
+                    <CopyToClipboard text={data.uuid} onCopy={() => onCopySuccess('UUID')}>
+                      <button className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600" title="复制 UUID"><CopyIcon /></button>
                     </CopyToClipboard>
                   </div>
-                  <button
-                    className="ml-2 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-                    onClick={uuidRegen}
-                  >
-                    {browser.i18n.getMessage('reGenerate') || '重新生成'}
-                  </button>
+                  <button className="ml-2 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600" onClick={uuidRegen}>{msg('reGenerate', '重新生成')}</button>
                 </div>
               </div>
 
               {/* Password */}
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">
-                  {browser.i18n.getMessage('syncPassword') || '端对端加密密码'}
-                </label>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('syncPassword', '端对端加密密码')}</label>
                 <div className="flex">
                   <div className="relative flex-1">
-                    <input
-                      type="password"
-                      className="form-input pl-10 pr-3"
-                      placeholder={browser.i18n.getMessage('syncPasswordPlaceholder') || '丢失后数据失效，请妥善保管'}
-                      value={data.password}
-                      onChange={(e) => handleInputChange('password', e.target.value)}
-                    />
-                    <CopyToClipboard 
-                      text={data.password}
-                      onCopy={() => onCopySuccess('Password')}
-                    >
-                      <button
-                        className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                        title="复制密码"
-                      >
-                        <CopyIcon />
-                      </button>
+                    <input type="password" className="form-input pl-10 pr-3" placeholder={msg('syncPasswordPlaceholder', '丢失后数据失效，请妥善保管')} value={data.password}
+                      onChange={(e) => handleInputChange('password', e.target.value)} />
+                    <CopyToClipboard text={data.password} onCopy={() => onCopySuccess('Password')}>
+                      <button className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600" title="复制密码"><CopyIcon /></button>
                     </CopyToClipboard>
                   </div>
-                  <button
-                    className="ml-2 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
-                    onClick={passwordGen}
-                  >
-                    {browser.i18n.getMessage('generate') || '生成'}
-                  </button>
+                  <button className="ml-2 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600" onClick={passwordGen}>{msg('generate', '生成')}</button>
                 </div>
               </div>
 
-              {/* Crypto Algorithm */}
+              {/* Cookie Expiration */}
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">
-                  {browser.i18n.getMessage('cryptoAlgorithm') || '加密算法'}
-                </label>
-                <select
-                  className="form-input"
-                  value={data.crypto_type}
-                  onChange={(e) => handleInputChange('crypto_type', e.target.value)}
-                >
-                  <option value="legacy">{browser.i18n.getMessage('cryptoLegacy') || 'CryptoJS(动态IV)'}</option>
-                  <option value="aes-128-cbc-fixed">{browser.i18n.getMessage('cryptoAesCbcFixed') || 'AES-128-CBC(固定IV)'}</option>
-                </select>
-                <div className="text-xs text-gray-500 mt-1">
-                  {data.crypto_type === 'legacy' 
-                    ? (browser.i18n.getMessage('cryptoLegacyDesc') || '使用CryptoJS加密算法，会动态生成IV')
-                    : (browser.i18n.getMessage('cryptoAesCbcFixedDesc') || '使用标准 AES-128-CBC 算法，IV固定为 0x0')
-                  }
-                </div>
-              </div>
-
-              {/* Cookie Expiration Time */}
-              <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">
-                  {browser.i18n.getMessage('cookieExpireMinutes') || 'Cookie过期时间·分钟'}
-                </label>
-                <input
-                  type="number"
-                  className="form-input"
-                  placeholder={browser.i18n.getMessage('cookieExpireMinutesPlaceholder') || '0为关闭浏览器后立刻过期'}
-                  value={data.expire_minutes}
-                  onChange={(e) => handleInputChange('expire_minutes', parseInt(e.target.value) || 0)}
-                />
+                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('cookieExpireMinutes', 'Cookie过期时间·分钟')}</label>
+                <input type="number" className="form-input" placeholder={msg('cookieExpireMinutesPlaceholder', '0为关闭浏览器后立刻过期')} value={data.expire_minutes}
+                  onChange={(e) => handleInputChange('expire_minutes', parseInt(e.target.value) || 0)} />
               </div>
 
               {/* Sync Interval */}
               <div>
-                <label className="block text-sm font-medium text-gray-600 mb-1">
-                  {browser.i18n.getMessage('syncTimeInterval') || '同步时间间隔·分钟'}
-                </label>
-                <input
-                  type="number"
-                  className="form-input"
-                  min="1"
-                  placeholder={browser.i18n.getMessage('syncTimeIntervalPlaceholder') || '最少10分钟'}
-                  value={data.interval}
-                  onChange={(e) => handleInputChange('interval', parseInt(e.target.value) || 10)}
-                />
+                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('syncTimeInterval', '同步时间间隔·分钟')}</label>
+                <input type="number" className="form-input" min="1" placeholder={msg('syncTimeIntervalPlaceholder', '最少10分钟')} value={data.interval}
+                  onChange={(e) => handleInputChange('interval', parseInt(e.target.value) || 10)} />
               </div>
 
+              {/* Domain list (upload mode only) */}
               {data.type === 'up' && (
-                <>
-                  {/* Sync LocalStorage */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-2">
-                      {browser.i18n.getMessage('syncLocalStorageOrNot') || '是否同步Local Storage'}
-                    </label>
-                    <div className="flex items-center space-x-4">
-                      <label className="flex items-center">
-                        <input
-                          type="radio"
-                          name="with_storage"
-                          value="1"
-                          checked={data.with_storage === 1}
-                          onChange={(e) => handleInputChange('with_storage', parseInt(e.target.value))}
-                          className="mr-2"
-                        />
-                        {browser.i18n.getMessage('yes') || '是'}
-                      </label>
-                      <label className="flex items-center">
-                        <input
-                          type="radio"
-                          name="with_storage"
-                          value="0"
-                          checked={data.with_storage === 0}
-                          onChange={(e) => handleInputChange('with_storage', parseInt(e.target.value))}
-                          className="mr-2"
-                        />
-                        {browser.i18n.getMessage('no') || '否'}
-                      </label>
+                <div>
+                  <label className="block text-sm font-medium text-gray-600 mb-2">{msg('syncDomains', '同步域名')}</label>
+                  <input type="text" className="form-input mb-2" placeholder={msg('domainFilterPlaceholder', '过滤域名')} value={filter}
+                    onChange={(e) => setFilter(e.target.value)} />
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-1 px-1">
+                    <div className="flex gap-2">
+                      <span className="w-8 text-center">{msg('columnSync', '同步')}</span>
+                      <span className="w-8 text-center">{msg('columnKeepAlive', '保活')}</span>
+                    </div>
+                    <div className="space-x-2">
+                      <button className="text-blue-600 hover:underline" onClick={() => setSyncForVisible(true)}>{msg('selectAll', '全选')}</button>
+                      <button className="text-blue-600 hover:underline" onClick={() => setSyncForVisible(false)}>{msg('clearAll', '清空')}</button>
                     </div>
                   </div>
-
-                  {/* Additional Request Headers */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-1">
-                      {browser.i18n.getMessage('requestHeader') || '请求Header·选填'}
-                    </label>
-                    <textarea
-                      className="form-textarea"
-                      placeholder={browser.i18n.getMessage('requestHeaderPlaceholder') || '在请求时追加Header，用于服务端鉴权等场景，一行一个，格式为\'Key:Value\'，不能有空格'}
-                      value={data.headers}
-                      onChange={(e) => handleInputChange('headers', e.target.value)}
-                    />
+                  <div className="border border-gray-200 rounded max-h-60 overflow-y-auto divide-y divide-gray-100">
+                    {visibleDomains.length === 0 && (
+                      <div className="p-3 text-sm text-gray-400 text-center">{msg('noCookiesFound', '未找到Cookie域名')}</div>
+                    )}
+                    {visibleDomains.map(domain => (
+                      <div key={domain} className="flex items-center px-2 py-1.5 text-sm">
+                        <input type="checkbox" className="w-8" checked={data.selected_domains.includes(domain)}
+                          onChange={() => toggleInArray('selected_domains', domain)} />
+                        <input type="checkbox" className="w-8" checked={data.keep_alive_domains.includes(domain)}
+                          onChange={() => toggleInArray('keep_alive_domains', domain)} />
+                        <span className="flex-1 ml-2 truncate text-gray-700">{domain}</span>
+                      </div>
+                    ))}
                   </div>
-
-                  {/* Domain Filter */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-1">
-                      {browser.i18n.getMessage('syncDomainKeyword') || '同步域名关键词·选填'}
-                    </label>
-                    <textarea
-                      className="form-textarea"
-                      placeholder={browser.i18n.getMessage('syncDomainKeywordPlaceholder') || '一行一个，同步包含关键词的全部域名，如qq.com,jd.com会包含全部子域名，留空默认同步全部'}
-                      value={data.domains}
-                      onChange={(e) => handleInputChange('domains', e.target.value)}
-                    />
-                  </div>
-
-                  {/* Blacklist */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-1">
-                      {browser.i18n.getMessage('syncDomainBlacklist') || '同步域名黑名单·选填'}
-                    </label>
-                    <textarea
-                      className="form-textarea"
-                      placeholder={browser.i18n.getMessage('syncDomainBlacklistPlaceholder') || '黑名单仅在同步域名关键词为空时生效。一行一个域名，匹配则不参与同步'}
-                      value={data.blacklist}
-                      onChange={(e) => handleInputChange('blacklist', e.target.value)}
-                    />
-                  </div>
-
-                  {/* Keep Live */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-600 mb-1">
-                      {browser.i18n.getMessage('cookieKeepLive') || 'Cookie Keep Alive · 选填'}
-                    </label>
-                    <textarea
-                      className="form-textarea"
-                      style={{ height: "60px" }}
-                      placeholder={browser.i18n.getMessage('cookieKeepLivePlaceholder') || '定期刷新URL在后台模拟用户活动。一行一个URL，默认60分钟，可以指定刷新时间与间隔'}
-                      value={data.keep_live}
-                      onChange={(e) => handleInputChange('keep_live', e.target.value)}
-                    />
-                  </div>
-                </>
+                  <div className="text-xs text-gray-400 mt-1">{msg('keepAliveHint', '保活：每小时后台访问一次该域名以保持登录')}</div>
+                </div>
               )}
             </>
           )}
 
           {data.type === 'pause' && (
-            <div className="bg-blue-400 text-white p-3 rounded">
-              {browser.i18n.getMessage('keepLiveStop') || '保持活跃已停止'}
-            </div>
+            <div className="bg-blue-400 text-white p-3 rounded">{msg('keepLiveStop', '暂停同步和保活')}</div>
           )}
-
         </div>
       </div>
-      
-      {/* 固定在底部的按钮组 */}
+
       <div className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4">
         <div className="flex justify-between">
           <div className="space-x-2">
             {data.type !== 'pause' && (
               <>
-                <button
-                  className="btn btn-primary text-sm px-3 py-2"
-                  onClick={() => test(browser.i18n.getMessage('syncManual') || '手动同步')}
-                >
-                  {browser.i18n.getMessage('syncManual') || '手动同步'}
-                </button>
-                <button
-                  className="btn btn-primary text-sm px-3 py-2"
-                  onClick={() => test(browser.i18n.getMessage('test') || '测试')}
-                >
-                  {browser.i18n.getMessage('test') || '测试'}
-                </button>
+                <button className="btn btn-primary text-sm px-3 py-2" onClick={() => test(msg('syncManual', '手动同步'))}>{msg('syncManual', '手动同步')}</button>
+                <button className="btn btn-primary text-sm px-3 py-2" onClick={() => test(msg('test', '测试'))}>{msg('test', '测试')}</button>
               </>
             )}
           </div>
-          <button
-            className="btn btn-success text-sm px-4 py-2"
-            onClick={save}
-          >
-            {browser.i18n.getMessage('save') || '保存'}
-          </button>
+          <button className="btn btn-success text-sm px-4 py-2" onClick={save}>{msg('save', '保存')}</button>
         </div>
       </div>
     </div>
