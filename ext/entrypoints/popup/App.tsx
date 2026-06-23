@@ -219,7 +219,10 @@ const CookieCloudPopup: React.FC = () => {
               {/* Domain list (upload mode only) */}
               {data.type === 'up' && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-2">{msg('syncDomains', '同步域名')}</label>
+                  <label className="block text-sm font-medium text-gray-600 mb-2">
+                    {msg('syncDomains', '同步域名')}
+                    <span className="ml-2 text-xs font-normal text-gray-400">{visibleDomains.length} / {knownDomains.length}</span>
+                  </label>
                   <input type="text" className="form-input mb-2" placeholder={msg('domainFilterPlaceholder', '过滤域名')} value={filter}
                     onChange={(e) => setFilter(e.target.value)} />
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 mb-2">
