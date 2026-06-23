@@ -36,6 +36,9 @@
     "overwriteModeDesp": {
         "message": "覆盖模式主要用于云端和只读用的浏览器，Cookie和Local Storage覆盖可能导致当前浏览器的登录和修改操作失效；另外部分网站不允许同一个cookie在多个浏览器同时登录，可能导致其他浏览器上账号退出。"
     },
+    "uuid": {
+        "message": "UUID"
+    },
     "syncPassword": {
         "message": "端对端加密密码"
     },

@@ -36,6 +36,9 @@
     "overwriteModeDesp": {
         "message": "Overwrite mode is mainly used for cloud and read-only browsers. Overwriting Cookies and Local Storage may cause current browser login and modification operations to fail; moreover, some websites do not allow the same cookie to be logged in on multiple browsers at the same time, which may cause account logouts on other browsers."
     },
+    "uuid": {
+        "message": "UUID"
+    },
     "syncPassword": {
         "message": "End-to-End Encryption Password"
     },

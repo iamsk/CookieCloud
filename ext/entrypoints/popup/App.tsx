@@ -138,7 +138,7 @@ const CookieCloudPopup: React.FC = () => {
   };
 
   const passwordGen = () => setPassword(String(short_uid.generate()));
-  const onCopySuccess = () => alert(`Password ${msg('copySuccess', '已复制到剪贴板')}`);
+  const onCopySuccess = (label: string) => alert(`${label} ${msg('copySuccess', '已复制到剪贴板')}`);
 
   const modes: [string, string][] = [
     ['up', msg('upToServer', '上传到服务器')],
@@ -147,7 +147,7 @@ const CookieCloudPopup: React.FC = () => {
   ];
 
   return (
-    <div className="w-96 overflow-x-hidden bg-white rounded-lg shadow-lg flex flex-col h-[600px] relative">
+    <div className="w-96 overflow-x-hidden bg-white rounded-lg shadow-lg flex flex-col h-[780px] relative">
       <div className="flex-1 overflow-y-auto p-5 pb-20">
         <div className="space-y-4">
           {/* Mode — 3-state segmented control on the first row */}
@@ -177,11 +177,22 @@ const CookieCloudPopup: React.FC = () => {
                   <div className="relative flex-1">
                     <input type="password" className="form-input pl-10 pr-3" placeholder={msg('syncPasswordPlaceholder', '丢失后数据失效，请妥善保管')} value={data.password}
                       onChange={(e) => setPassword(e.target.value)} />
-                    <CopyToClipboard text={data.password} onCopy={onCopySuccess}>
+                    <CopyToClipboard text={data.password} onCopy={() => onCopySuccess('Password')}>
                       <button className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600" title="复制密码"><CopyIcon /></button>
                     </CopyToClipboard>
                   </div>
                   <button className="ml-2 px-3 py-2 bg-gray-500 text-white rounded hover:bg-gray-600" onClick={passwordGen}>{msg('generate', '生成')}</button>
+                </div>
+              </div>
+
+              {/* UUID — derived from the password, read-only, copyable */}
+              <div>
+                <label className="block text-sm font-medium text-gray-600 mb-1">{msg('uuid', 'UUID')}</label>
+                <div className="relative">
+                  <input type="text" readOnly className="form-input pl-10 pr-3 bg-gray-50 text-gray-600 cursor-default" value={data.uuid} />
+                  <CopyToClipboard text={data.uuid} onCopy={() => onCopySuccess('UUID')}>
+                    <button className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600" title="复制 UUID"><CopyIcon /></button>
+                  </CopyToClipboard>
                 </div>
               </div>
 
